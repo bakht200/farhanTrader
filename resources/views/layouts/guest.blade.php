@@ -8,7 +8,7 @@
         <title>@isset($header){{ $header }} - @endisset{{ config('app.name', 'Laravel') }}</title>
 
         <!-- Favicon -->
-        <link rel="icon" type="image/png" href="{{ asset('build/assets/logo.png') }}">
+        <link rel="icon" type="image/png" href="{{ asset('logo.png') }}">
 
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">
@@ -38,7 +38,7 @@
                     <div class="flex flex-col items-center justify-center mb-8">
                         <!-- Logo Image -->
                         <div class="mb-3">
-                            <img src="{{ asset('build/assets/logo.png') }}" alt="Farhan Traders Logo" class="h-16 w-auto">
+                            <img src="{{ asset('logo.png') }}" alt="Farhan Traders Logo" class="h-16 w-auto">
                         </div>
                         <!-- Company Name in dark purple -->
                         <span class="text-2xl font-bold" style="color: #5A189A;">Farhan Traders System</span>

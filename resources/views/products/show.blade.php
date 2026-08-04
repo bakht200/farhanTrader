@@ -80,8 +80,11 @@
                         <dd class="mt-1 text-sm font-semibold text-gray-900">PKR {{ number_format($product->selling_price, 2) }}</dd>
                     </div>
                     <div>
-                        <dt class="text-sm font-medium text-gray-500">Stock Quantity</dt>
-                        <dd class="mt-1 text-sm text-gray-900">{{ number_format($product->stock_quantity) }}</dd>
+                        <dt class="text-sm font-medium text-gray-500">Stock Quantity (Current Branch)</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            {{ number_format((float) $product->stock_quantity, 2) }}
+                            {{ $product->unit->short_name ?? '' }}
+                        </dd>
                     </div>
                     <div>
                         <dt class="text-sm font-medium text-gray-500">Low Stock Threshold</dt>
@@ -110,6 +113,41 @@
                         <dd class="mt-1 text-sm text-gray-900">{{ $product->created_at->format('Y-m-d h:i A') }}</dd>
                     </div>
                 </dl>
+            </div>
+        </div>
+
+        <div class="mt-8 border-t border-gray-200 pt-6">
+            <h3 class="text-lg font-semibold mb-2">Stock by Branch</h3>
+            <p class="text-sm text-gray-600 mb-4">Same product across branches with separate quantities.</p>
+
+            <div class="overflow-x-auto border border-gray-200 rounded-md">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Branch</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Available Quantity</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 bg-white">
+                        @foreach($branchStocks as $branchStock)
+                            <tr class="{{ !empty($branchStock['is_current']) ? 'bg-orange-50' : '' }}">
+                                <td class="px-4 py-3 text-sm font-medium text-gray-900">
+                                    {{ $branchStock['name'] }}
+                                    @if(!empty($branchStock['is_current']))
+                                        <span class="ml-2 inline-flex px-2 py-0.5 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">Current</span>
+                                    @endif
+                                </td>
+                                <td class="px-4 py-3 text-sm {{ $branchStock['stock_quantity'] <= 0 ? 'text-red-600 font-semibold' : 'text-gray-900' }}">
+                                    {{ number_format($branchStock['stock_quantity'], 2) }}
+                                </td>
+                                <td class="px-4 py-3 text-sm text-gray-600">
+                                    {{ $product->unit->short_name ?? ($product->unit->name ?? '—') }}
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

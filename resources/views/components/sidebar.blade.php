@@ -6,7 +6,7 @@
     <!-- Logo -->
     <div class="p-6 border-b border-gray-200">
         <div class="flex items-center gap-3">
-            <img src="{{ asset('build/assets/logo.png') }}" alt="Farhan Traders Logo" class="h-12 w-auto">
+            <img src="{{ asset('logo.png') }}" alt="Farhan Traders Logo" class="h-12 w-auto">
             <h1 class="text-lg font-bold text-gray-800">Farhan Traders</h1>
         </div>
     </div>
@@ -41,6 +41,16 @@
                         Health Check
                     </a>
                 </li>
+                @if(Auth::user()?->isAdmin())
+                <li>
+                    <a href="{{ route('branches.index') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('branches.*') ? 'bg-gray-100 font-medium' : '' }}">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                        </svg>
+                        Branches
+                    </a>
+                </li>
+                @endif
             </ul>
         </div>
 

@@ -2,14 +2,17 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SupplierBill extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'supplier_id', 'bill_number', 'bill_amount', 'bill_date', 
+        'branch_id', 'supplier_id', 'bill_number', 'bill_amount', 'bill_date',
         'description', 'reference_number', 'bill_image'
     ];
 

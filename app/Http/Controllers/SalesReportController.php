@@ -68,6 +68,7 @@ class SalesReportController extends Controller
             : ($currentInvoices > 0 ? 100 : 0);
 
         // Build sales report query
+        $branchId = \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
         $salesReportQuery = SaleItem::select(
                 'products.sku',
                 'products.name as product_name',
@@ -75,11 +76,16 @@ class SalesReportController extends Controller
                 'categories.name as category_name',
                 DB::raw('SUM(sale_items.quantity) as sold_qty'),
                 DB::raw('SUM(sale_items.total) as sold_amount'),
-                DB::raw('MAX(products.stock_quantity) as instock_qty')
+                DB::raw('MAX(COALESCE(branch_product_stocks.stock_quantity, 0)) as instock_qty')
             )
             ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
             ->join('products', 'sale_items.product_id', '=', 'products.id')
             ->leftJoin('categories', 'products.category_id', '=', 'categories.id')
+            ->leftJoin('branch_product_stocks', function ($join) use ($branchId) {
+                $join->on('branch_product_stocks.product_id', '=', 'products.id')
+                    ->where('branch_product_stocks.branch_id', '=', $branchId);
+            })
+            ->where('sales.branch_id', $branchId)
             ->whereBetween('sales.sale_date', [$startDate, $endDate])
             ->where('sales.status', 'completed');
 

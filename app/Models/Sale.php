@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use App\Services\CustomerBalanceService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,8 +11,10 @@ use Illuminate\Support\Collection;
 
 class Sale extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'sale_number', 'customer_id', 'user_id', 'sale_date',
+        'branch_id', 'sale_number', 'customer_id', 'user_id', 'sale_date',
         'subtotal', 'tax_amount', 'discount_amount', 'total_amount',
         'paid_amount', 'payment_status', 'status', 'notes'
     ];

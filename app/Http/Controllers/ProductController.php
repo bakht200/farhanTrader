@@ -8,6 +8,8 @@ use App\Models\Unit;
 use App\Models\Supplier;
 use App\Models\ProductUnit;
 use App\Models\UnitConversion;
+use App\Services\BranchStockService;
+use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
@@ -17,7 +19,7 @@ class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy');
+        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy', 'currentBranchStock');
 
         // Search functionality
         if ($request->filled('search')) {
@@ -188,7 +190,11 @@ class ProductController extends Controller
         
         DB::beginTransaction();
         try {
+            $initialStock = (float) ($validated['stock_quantity'] ?? 0);
+            $validated['stock_quantity'] = 0; // legacy column; live stock is per-branch
+
             $product = Product::create($validated);
+            app(BranchStockService::class)->initializeProduct($product, $initialStock);
             
             // Create ProductUnit records
             // First, always create base unit ProductUnit
@@ -413,8 +419,25 @@ class ProductController extends Controller
 
     public function show(Product $product)
     {
-        $product->load('category', 'unit', 'createdBy');
-        return view('products.show', compact('product'));
+        $product->load('category', 'unit', 'createdBy', 'currentBranchStock');
+
+        $branchStocks = \App\Models\Branch::query()
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->with(['productStocks' => function ($query) use ($product) {
+                $query->where('product_id', $product->id);
+            }])
+            ->get()
+            ->map(function ($branch) {
+                return [
+                    'id' => $branch->id,
+                    'name' => $branch->name,
+                    'stock_quantity' => (float) ($branch->productStocks->first()->stock_quantity ?? 0),
+                    'is_current' => (int) $branch->id === (int) (CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID),
+                ];
+            });
+
+        return view('products.show', compact('product', 'branchStocks'));
     }
 
     public function edit(Product $product)
@@ -424,7 +447,7 @@ class ProductController extends Controller
         $suppliers = Supplier::where('is_active', true)->get();
         
         // Load product units and conversions
-        $product->load(['productUnits.unit']);
+        $product->load(['productUnits.unit', 'currentBranchStock']);
         $productUnits = $product->productUnits()->with('unit')->get(); // Load all, not just active
         
         // Get conversions involving product units (check both active and inactive ProductUnits)
@@ -553,7 +576,11 @@ class ProductController extends Controller
 
         DB::beginTransaction();
         try {
+            $branchStockQty = (float) ($validated['stock_quantity'] ?? 0);
+            unset($validated['stock_quantity']); // do not write shared legacy column from form
+
             $product->update($validated);
+            $product->setBranchStock($branchStockQty);
             
             // Update ProductUnit records
             // First, update or create base unit ProductUnit
@@ -963,35 +990,41 @@ class ProductController extends Controller
     public function lowStocks(Request $request)
     {
         $tab = $request->get('tab', 'low-stocks'); // 'low-stocks' or 'out-of-stocks'
-        
-        $query = Product::with('category', 'unit', 'createdBy');
+        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
 
-        // Apply tab filter
+        $query = Product::with('category', 'unit', 'createdBy', 'currentBranchStock')
+            ->leftJoin('branch_product_stocks', function ($join) use ($branchId) {
+                $join->on('branch_product_stocks.product_id', '=', 'products.id')
+                    ->where('branch_product_stocks.branch_id', '=', $branchId);
+            })
+            ->select('products.*', DB::raw('COALESCE(branch_product_stocks.stock_quantity, 0) as branch_stock_quantity'));
+
+        // Apply tab filter against per-branch stock
         if ($tab === 'out-of-stocks') {
-            $query->where('stock_quantity', 0);
+            $query->whereRaw('COALESCE(branch_product_stocks.stock_quantity, 0) = 0');
         } else {
-            $query->whereColumn('stock_quantity', '<=', 'low_stock_threshold')
-                  ->where('stock_quantity', '>', 0);
+            $query->whereRaw('COALESCE(branch_product_stocks.stock_quantity, 0) <= products.low_stock_threshold')
+                  ->whereRaw('COALESCE(branch_product_stocks.stock_quantity, 0) > 0');
         }
 
         // Search functionality
         if ($request->filled('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('sku', 'like', "%{$search}%")
-                  ->orWhere('brand', 'like', "%{$search}%");
+                $q->where('products.name', 'like', "%{$search}%")
+                  ->orWhere('products.sku', 'like', "%{$search}%")
+                  ->orWhere('products.brand', 'like', "%{$search}%");
             });
         }
 
         // Brand filter
         if ($request->filled('brand') && $request->brand !== 'all') {
-            $query->where('brand', $request->brand);
+            $query->where('products.brand', $request->brand);
         }
 
         // Category filter
         if ($request->filled('category_id') && $request->category_id !== 'all') {
-            $query->where('category_id', $request->category_id);
+            $query->where('products.category_id', $request->category_id);
         }
 
         // Sorting
@@ -999,9 +1032,11 @@ class ProductController extends Controller
         $sortOrder = $request->get('sort_order', 'asc');
         
         if ($sortBy === 'sku') {
-            $query->orderBy('sku', $sortOrder);
+            $query->orderBy('products.sku', $sortOrder);
+        } elseif ($sortBy === 'stock_quantity') {
+            $query->orderBy('branch_stock_quantity', $sortOrder);
         } else {
-            $query->orderBy($sortBy, $sortOrder);
+            $query->orderBy('products.' . $sortBy, $sortOrder);
         }
 
         $products = $query->paginate($request->get('per_page', 10))
@@ -1023,7 +1058,7 @@ class ProductController extends Controller
      */
     public function getAllProducts(Request $request)
     {
-        $query = Product::where('is_active', true)->with('category', 'unit');
+        $query = Product::where('is_active', true)->with('category', 'unit', 'currentBranchStock');
 
         // Search functionality
         if ($request->filled('search')) {

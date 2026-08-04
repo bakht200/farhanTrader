@@ -128,7 +128,7 @@ class InvoiceController extends Controller
                     if ($item) {
                         // Restore stock if product exists
                         if ($item->product_id && $item->product) {
-                            $item->product->increment('stock_quantity', $item->quantity);
+                            $item->product->incrementStock( $item->quantity);
                         }
                         $item->delete();
                     }
@@ -163,19 +163,19 @@ class InvoiceController extends Controller
 
                         // Adjust stock if product changed or quantity changed
                         if ($oldProductId && $item->product) {
-                            $item->product->increment('stock_quantity', $oldQuantity);
+                            $item->product->incrementStock( $oldQuantity);
                         }
                         if ($itemData['product_id'] && $itemData['product_id'] != $oldProductId) {
                             $newProduct = Product::find($itemData['product_id']);
                             if ($newProduct) {
-                                $newProduct->decrement('stock_quantity', $itemData['quantity']);
+                                $newProduct->decrementStock( $itemData['quantity']);
                             }
                         } elseif ($itemData['product_id'] && $itemData['product_id'] == $oldProductId) {
                             $quantityDiff = $oldQuantity - $itemData['quantity'];
                             if ($quantityDiff > 0) {
-                                $item->product->increment('stock_quantity', $quantityDiff);
+                                $item->product->incrementStock( $quantityDiff);
                             } elseif ($quantityDiff < 0) {
-                                $item->product->decrement('stock_quantity', abs($quantityDiff));
+                                $item->product->decrementStock( abs($quantityDiff));
                             }
                         }
                     }
@@ -196,7 +196,7 @@ class InvoiceController extends Controller
                     if ($itemData['product_id']) {
                         $product = Product::find($itemData['product_id']);
                         if ($product) {
-                            $product->decrement('stock_quantity', $itemData['quantity']);
+                            $product->decrementStock( $itemData['quantity']);
                         }
                     }
                 }
@@ -308,7 +308,7 @@ class InvoiceController extends Controller
             if ($invoice->sale) {
                 foreach ($invoice->sale->items as $item) {
                     if ($item->product_id && $item->product) {
-                        $item->product->increment('stock_quantity', $item->quantity);
+                        $item->product->incrementStock( $item->quantity);
                     }
                 }
             }

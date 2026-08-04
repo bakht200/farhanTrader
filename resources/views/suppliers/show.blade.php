@@ -3,6 +3,8 @@
         Supplier Details
     </x-slot>
 
+    <style>[x-cloak] { display: none !important; }</style>
+
     <!-- Breadcrumb -->
     <div class="mb-4">
         <nav class="text-sm text-gray-600">
@@ -109,14 +111,34 @@
             </div>
         </div>
 
-        <!-- Bills Section -->
+        <!-- Bills Section (collapsible, oldest first) -->
         @if(isset($bills) && $bills->count() > 0)
-        <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-4">Bills</h3>
-            <div class="overflow-x-auto">
+        <div class="mt-6" x-data="{ billsOpen: false }">
+            <button
+                type="button"
+                @click="billsOpen = !billsOpen"
+                class="w-full flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-left shadow-sm hover:bg-gray-50"
+            >
+                <div class="flex items-center gap-2">
+                    <h3 class="text-lg font-semibold text-gray-900">Bills</h3>
+                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                        {{ $bills->count() }}
+                    </span>
+                </div>
+                <svg class="h-5 w-5 text-gray-500 transition-transform duration-200" :class="{ 'rotate-180': billsOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </button>
+
+            <div
+                x-show="billsOpen"
+                x-cloak
+                x-transition
+                class="mt-3 overflow-x-auto border border-gray-200 rounded-lg"
+            >
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
-                        <tr>
+                        <tr class="divide-x divide-gray-200">
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Number</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Date</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Amount</th>
@@ -129,7 +151,7 @@
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         @foreach($bills as $bill)
-                        <tr>
+                        <tr class="hover:bg-gray-50 divide-x divide-gray-200">
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">#{{ $bill->bill_number ?? $bill->id }}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $bill->bill_date->format('d M Y') }}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">PKR {{ number_format($bill->bill_amount, 1) }}</td>
@@ -146,10 +168,10 @@
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap">
                                 @if($bill->bill_image)
-                                    <button onclick="viewBillImage('{{ asset('storage/' . $bill->bill_image) }}')" 
+                                    <button onclick="viewBillImage('{{ asset('storage/' . $bill->bill_image) }}')"
                                             class="text-blue-600 hover:text-blue-900 inline-flex items-center">
                                         <svg class="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                                         </svg>
                                         View Image
                                     </button>
@@ -164,10 +186,10 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
                                         </svg>
                                     </a>
-                                    <button onclick="printSupplierBillReceipt({{ $bill->id }})" 
+                                    <button onclick="printSupplierBillReceipt({{ $bill->id }})"
                                             class="text-blue-600 hover:text-blue-900 inline-flex items-center" title="Print Receipt">
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2 2v4h10z"></path>
                                         </svg>
                                     </button>
                                 </div>
@@ -180,74 +202,155 @@
         </div>
         @endif
 
-        <!-- Transactions Section -->
-        <div class="mt-6">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-lg font-semibold">Transactions</h3>
-                <a href="{{ route('suppliers.transactions.create', $supplier) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md text-sm font-medium inline-flex items-center">
+        <!-- Transactions Section (collapsible) -->
+        <div class="mt-6" x-data="{ txOpen: false }">
+            <div class="flex items-center gap-3">
+                <button
+                    type="button"
+                    @click="txOpen = !txOpen"
+                    class="flex-1 flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-left shadow-sm hover:bg-gray-50"
+                >
+                    <div class="flex items-center gap-2">
+                        <h3 class="text-lg font-semibold text-gray-900">Transactions</h3>
+                        <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                            {{ isset($transactions) ? $transactions->count() : 0 }}
+                        </span>
+                    </div>
+                    <svg class="h-5 w-5 text-gray-500 transition-transform duration-200" :class="{ 'rotate-180': txOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                <a href="{{ route('suppliers.transactions.create', $supplier) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md text-sm font-medium inline-flex items-center whitespace-nowrap">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                     </svg>
                     Add Transaction
                 </a>
             </div>
-            
-            @if(isset($transactions) && $transactions->count() > 0)
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
+
+            <div x-show="txOpen" x-cloak x-transition class="mt-3">
+                @if(isset($transactions) && $transactions->count() > 0)
+                <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr class="divide-x divide-gray-200">
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reference</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase font-bold text-gray-900">Remaining</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            @php $runningBalance = $balance; @endphp
+                            @foreach($transactions as $transaction)
+                            <tr class="hover:bg-gray-50 divide-x divide-gray-200">
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $transaction->transaction_date->format('d M Y') }}</td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    @if($transaction->type === 'credit')
+                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Credit (Owed)</span>
+                                    @else
+                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Debit (Paid)</span>
+                                    @endif
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold {{ $transaction->type === 'credit' ? 'text-red-600' : 'text-green-600' }}">
+                                    PKR {{ number_format($transaction->amount, 1) }}
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-900">{{ $transaction->description ?? 'N/A' }}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $transaction->reference_number ?? 'N/A' }}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-bold {{ $runningBalance > 0 ? 'text-red-600' : 'text-green-600' }}">
+                                    PKR {{ number_format($runningBalance, 1) }}
+                                </td>
+                                @php
+                                    if ($transaction->type === 'credit') {
+                                        $runningBalance -= $transaction->amount;
+                                    } else {
+                                        $runningBalance += $transaction->amount;
+                                    }
+                                @endphp
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                    <a href="{{ route('suppliers.transactions.edit', [$supplier, $transaction]) }}" class="text-blue-600 hover:text-blue-900" title="Edit">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
+                                    </a>
+                                </td>
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @else
+                <div class="text-center py-8 text-gray-500 border border-gray-200 rounded-lg">
+                    No transactions found. Add a transaction to get started.
+                </div>
+                @endif
+            </div>
+        </div>
+
+        <!-- Ledger Section (same layout as customer detail) -->
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold mb-4">Ledger</h3>
+            @if(isset($ledgerEntries) && count($ledgerEntries['rows']) > 0)
+            <div class="overflow-x-auto border border-gray-300 rounded-lg">
+                <table class="min-w-full border-collapse">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reference</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase font-bold text-gray-900 border-l border-gray-200">Remaining</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Type</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Ref #</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase border border-gray-300">Narration</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Debit</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Credit</th>
+                            <th class="px-4 py-3 text-right text-xs font-bold text-gray-900 uppercase whitespace-nowrap border border-gray-300">Balance</th>
                         </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        @php $runningBalance = $balance; @endphp
-                        @foreach($transactions as $transaction)
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $transaction->transaction_date->format('d M Y') }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap">
-                                @if($transaction->type === 'credit')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Credit (Owed)</span>
+                    <tbody class="bg-white">
+                        @foreach($ledgerEntries['rows'] as $row)
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 border border-gray-300">
+                                {{ $row['date'] ? $row['date']->format('d/m/Y') : '—' }}
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap border border-gray-300">
+                                @if($row['type'] === 'Credit')
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">Credit</span>
+                                @elseif($row['type'] === 'Payment')
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Payment</span>
                                 @else
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Debit (Paid)</span>
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ $row['type'] }}</span>
                                 @endif
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold {{ $transaction->type === 'credit' ? 'text-red-600' : 'text-green-600' }}">
-                                PKR {{ number_format($transaction->amount, 1) }}
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 border border-gray-300">{{ $row['ref'] }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-900 max-w-md border border-gray-300">{{ $row['narration'] }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-green-600 border border-gray-300">
+                                {{ $row['debit'] !== null ? 'PKR ' . number_format($row['debit'], 2) : '' }}
                             </td>
-                            <td class="px-6 py-4 text-sm text-gray-900">{{ $transaction->description ?? 'N/A' }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $transaction->reference_number ?? 'N/A' }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-bold border-l border-gray-200 {{ $runningBalance > 0 ? 'text-red-600' : 'text-green-600' }}">
-                                PKR {{ number_format($runningBalance, 1) }}
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900 border border-gray-300">
+                                {{ $row['credit'] !== null ? 'PKR ' . number_format($row['credit'], 2) : '' }}
                             </td>
-                            @php
-                                if ($transaction->type === 'credit') {
-                                    $runningBalance -= $transaction->amount;
-                                } else {
-                                    $runningBalance += $transaction->amount;
-                                }
-                            @endphp
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                <a href="{{ route('suppliers.transactions.edit', [$supplier, $transaction]) }}" class="text-blue-600 hover:text-blue-900" title="Edit">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                                    </svg>
-                                </a>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold border border-gray-300 {{ $row['balance'] > 0 ? 'text-red-600' : 'text-green-600' }}">
+                                PKR {{ number_format($row['balance'], 2) }}
                             </td>
                         </tr>
                         @endforeach
                     </tbody>
+                    <tfoot class="bg-gray-50">
+                        <tr>
+                            <td colspan="4" class="px-4 py-3 text-sm font-bold text-gray-900 text-right border border-gray-300">Total</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-green-600 border border-gray-300">PKR {{ number_format($ledgerEntries['total_debit'], 2) }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900 border border-gray-300">PKR {{ number_format($ledgerEntries['total_credit'], 2) }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold border border-gray-300 {{ $ledgerEntries['final_balance'] > 0 ? 'text-red-600' : 'text-green-600' }}">
+                                PKR {{ number_format($ledgerEntries['final_balance'], 2) }}
+                            </td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
             @else
-            <div class="text-center py-8 text-gray-500">
-                No transactions found. Add a transaction to get started.
+            <div class="text-center py-8 text-gray-500 border border-gray-200 rounded-lg">
+                No ledger entries found.
             </div>
             @endif
         </div>

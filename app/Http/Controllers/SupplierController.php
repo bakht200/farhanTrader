@@ -359,7 +359,7 @@ class SupplierController extends Controller
         $products = \App\Models\Product::where(function($q) use ($supplier) {
             $q->where('supplier_id', $supplier->id)
               ->orWhere('supplier_name', $supplier->name);
-        })->get();
+        })->with('currentBranchStock')->get();
 
         $supplier->products = $products;
         $supplier->total_price = $products->sum(function($product) {
@@ -373,14 +373,77 @@ class SupplierController extends Controller
         $debitTotal = $supplier->transactions()->where('type', 'debit')->sum('amount'); // Payment Made
         $balance = $creditTotal - $debitTotal; // Amount Owed - Payment Made = Remaining
         
-        // Get bills with remaining amounts
-        $bills = $supplier->bills()->with('transactions')->orderBy('bill_date', 'desc')->get()->map(function($bill) {
+        // Get bills with remaining amounts (oldest first, same as ledger)
+        $bills = $supplier->bills()->with('transactions')->orderBy('bill_date', 'asc')->orderBy('id', 'asc')->get()->map(function($bill) {
             $bill->paid_amount = $bill->transactions()->where('type', 'debit')->sum('amount'); // Payments are debits
             $bill->remaining = $bill->bill_amount - $bill->paid_amount;
             return $bill;
         });
+
+        $ledgerEntries = $this->buildSupplierLedger($supplier, $balance);
         
-        return view('suppliers.show', compact('supplier', 'transactions', 'creditTotal', 'debitTotal', 'balance', 'bills'));
+        return view('suppliers.show', compact('supplier', 'transactions', 'creditTotal', 'debitTotal', 'balance', 'bills', 'ledgerEntries'));
+    }
+
+    /**
+     * Chronological debit/credit ledger for supplier detail (same layout as customer ledger).
+     * Credit = amount owed to supplier; Debit = payment made.
+     *
+     * @return array{rows: list<array<string, mixed>>, total_debit: float, total_credit: float, final_balance: float}
+     */
+    protected function buildSupplierLedger(Supplier $supplier, float $currentBalance): array
+    {
+        $transactions = $supplier->transactions()
+            ->orderBy('transaction_date', 'asc')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        $entries = [];
+        foreach ($transactions as $tx) {
+            $isCredit = $tx->type === 'credit';
+            $entries[] = [
+                'date' => $tx->transaction_date,
+                'type' => $isCredit ? 'Credit' : 'Payment',
+                'ref' => $tx->reference_number ?: ($tx->supplier_bill_id ? '#' . $tx->supplier_bill_id : '-'),
+                'narration' => filled($tx->description) ? $tx->description : ($isCredit ? 'Credit' : 'Payment'),
+                'debit' => $isCredit ? null : (float) $tx->amount,
+                'credit' => $isCredit ? (float) $tx->amount : null,
+            ];
+        }
+
+        $totalCredit = array_sum(array_map(fn ($e) => $e['credit'] ?? 0, $entries));
+        $totalDebit = array_sum(array_map(fn ($e) => $e['debit'] ?? 0, $entries));
+
+        $opening = round($currentBalance - ($totalCredit - $totalDebit), 2);
+        if (abs($opening) >= 0.01) {
+            array_unshift($entries, [
+                'date' => null,
+                'type' => 'Opening',
+                'ref' => '-',
+                'narration' => 'Opening balance',
+                'debit' => $opening < 0 ? abs($opening) : null,
+                'credit' => $opening > 0 ? $opening : null,
+            ]);
+            if ($opening > 0) {
+                $totalCredit += $opening;
+            } else {
+                $totalDebit += abs($opening);
+            }
+        }
+
+        $running = 0.0;
+        foreach ($entries as &$entry) {
+            $running += ($entry['credit'] ?? 0) - ($entry['debit'] ?? 0);
+            $entry['balance'] = round($running, 2);
+        }
+        unset($entry);
+
+        return [
+            'rows' => $entries,
+            'total_debit' => round($totalDebit, 2),
+            'total_credit' => round($totalCredit, 2),
+            'final_balance' => round($running, 2),
+        ];
     }
 
     public function printSupplierReport(Supplier $supplier)
@@ -504,7 +567,7 @@ class SupplierController extends Controller
         
         // Get products with their base units and selling units
         $products = Product::where('is_active', true)
-            ->with(['unit', 'baseUnit', 'productUnits.unit'])
+            ->with(['unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock'])
             ->get();
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
@@ -646,13 +709,14 @@ class SupplierController extends Controller
                             'selling_price' => $sellingPrice,
                             'retail_price' => $retailPrice,
                             'wholesale_price' => $wholesalePrice,
-                            'stock_quantity' => $quantity,
+                            'stock_quantity' => 0,
                             'low_stock_threshold' => 10,
                             'selling_type' => $sellingType,
                             'product_type' => 'single',
                             'is_active' => true,
                             'user_id' => auth()->id(),
                         ]);
+                        app(\App\Services\BranchStockService::class)->initializeProduct($product, (float) $quantity);
                         $productId = $product->id;
                         
                         // Create ProductUnit for the base unit
@@ -688,9 +752,8 @@ class SupplierController extends Controller
                             $newPrice = $productData['unit_price'] ?? $oldPrice;
                             $quantityToAdd = $productData['quantity'] ?? 0;
                             
-                            // Update stock quantity (always add/increment)
-                            $product->increment('stock_quantity', $quantityToAdd);
-                            $newStock = $product->stock_quantity;
+                            // Update stock quantity (always add/increment) for current branch
+                            $newStock = $product->incrementStock((float) $quantityToAdd);
                             
                             // Update purchase price (last added price)
                             $priceUpdated = false;

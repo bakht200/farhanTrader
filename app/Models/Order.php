@@ -2,14 +2,17 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Order extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'order_number', 'customer_id', 'user_id', 'order_date',
+        'branch_id', 'order_number', 'customer_id', 'user_id', 'order_date',
         'expected_delivery_date', 'subtotal', 'tax_amount',
         'discount_amount', 'total_amount', 'paid_amount',
         'status', 'payment_status', 'notes'

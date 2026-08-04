@@ -3,6 +3,8 @@
         Customer Details
     </x-slot>
 
+    <style>[x-cloak] { display: none !important; }</style>
+
     <!-- Breadcrumb -->
     <div class="mb-4">
         <nav class="text-sm text-gray-600">
@@ -114,7 +116,7 @@
                                 Paid
                             </span>
                         @endif
-                        <span class="text-xs text-gray-600">Total Sales: {{ $customer->sales->count() }}</span>
+                        <span class="text-xs text-gray-600">Total Sales: {{ $customerBills->count() }}</span>
                     </div>
                 </div>
                 <div class="mt-3 text-sm text-gray-600">
@@ -123,131 +125,45 @@
             </div>
         </div>
 
-        <!-- Recent Sales -->
-        @if($customer->sales->count() > 0)
-        <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-4">All Sales</h3>
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sale Number</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sale Total</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Payable</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Remaining Balance</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        @foreach($customer->sales as $sale)
-                        @php
-                            $hasAdjBill = isset($sale->adj_bill_number);
-                            $dbPaid = (float) ($sale->db_paid_amount ?? $sale->paid_amount ?? 0);
-                            $prevBal = (float) ($sale->invoice_previous_balance ?? 0);
-                            $totalPayable = (float) ($sale->total_payable ?? $sale->total_amount);
-                            $remainingDue = (float) ($sale->remaining_balance_due ?? max(0, $totalPayable - $dbPaid));
-                            $mergedPaidDisplay = (float) ($sale->paid_amount ?? 0);
-                            $adjLinkedTotal = (float) ($sale->adj_paid_amount ?? 0);
-                            $adjOnThisBill = round(max(0, $mergedPaidDisplay - $dbPaid), 2);
-                            $adjTowardOlder = round(max(0, $adjLinkedTotal - $adjOnThisBill), 2);
-                            $showAdjBreakdown = $hasAdjBill && $adjLinkedTotal > 0.005;
-                            $adjLogByParent = $adjAllocationsFromLogs ?? [];
-                            $adjLines = $adjLogByParent[$sale->sale_number] ?? [];
-                            $adjLinesSum = collect($adjLines)->sum('amount');
-                        @endphp
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {{ $sale->sale_number }}
-                                @if($hasAdjBill)
-                                    <div class="mt-1">
-                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800" title="Adjustment {{ $sale->adj_bill_number }} — extra from this checkout; see Paid column for how much went to older bills vs this bill">
-                                            + ADJ
-                                        </span>
-                                    </div>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $sale->sale_date->format('Y-m-d') }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">PKR {{ number_format($sale->total_amount, 2) }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                <div>PKR {{ number_format($totalPayable, 2) }}</div>
-                                @if($prevBal > 0)
-                                    <div class="text-xs font-normal text-gray-500 mt-0.5">incl. prev. PKR {{ number_format($prevBal, 2) }}</div>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600 align-top">
-                                @if($showAdjBreakdown)
-                                    <div x-data="{ adjOpen: false }" class="max-w-xs">
-                                        <div class="inline-flex items-center gap-1 flex-wrap">
-                                            <span>PKR {{ number_format($mergedPaidDisplay, 2) }}</span>
-                                            <button
-                                                type="button"
-                                                @click="adjOpen = !adjOpen"
-                                                :title="adjOpen ? 'Hide ADJ details' : 'Show ADJ details'"
-                                                :aria-expanded="adjOpen"
-                                                class="inline-flex shrink-0 rounded p-0.5 text-blue-600 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1"
-                                            >
-                                                <span class="sr-only">Toggle ADJ breakdown</span>
-                                                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
-                                                </svg>
-                                            </button>
-                                        </div>
-                                        <div
-                                            x-show="adjOpen"
-                                            x-cloak
-                                            x-transition
-                                            class="mt-2 space-y-0.5 border-l-2 border-blue-200 pl-2 text-xs text-gray-500"
-                                        >
-                                            @if($adjTowardOlder > 0.005)
-                                                <div class="font-medium text-gray-700">Toward older balance: PKR {{ number_format($adjTowardOlder, 2) }}</div>
-                                                @if(count($adjLines) > 0)
-                                                    <ul class="mt-1 list-none space-y-0.5 pl-0 text-[11px] text-gray-600">
-                                                        @foreach($adjLines as $line)
-                                                            <li>→ {{ $line['to'] }}: PKR {{ number_format($line['amount'], 2) }}</li>
-                                                        @endforeach
-                                                    </ul>
-                                                    @if(abs($adjLinesSum - $adjTowardOlder) > 0.02)
-                                                        <p class="mt-1 text-[11px] text-amber-700">Log total PKR {{ number_format($adjLinesSum, 2) }} vs ADJ PKR {{ number_format($adjTowardOlder, 2) }} — data mismatch; check payment logs.</p>
-                                                    @endif
-                                                @endif
-                                            @endif
-                                            @if($adjOnThisBill > 0.005)
-                                                <div class="text-gray-700">On this bill (ADJ): PKR {{ number_format($adjOnThisBill, 2) }}</div>
-                                            @endif
-                                        </div>
-                                    </div>
-                                @else
-                                    PKR {{ number_format($mergedPaidDisplay, 2) }}
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold {{ $remainingDue > 0 ? 'text-red-600' : 'text-green-600' }}">PKR {{ number_format($remainingDue, 2) }}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                @if($sale->payment_status == 'paid')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Paid</span>
-                                @elseif($sale->payment_status == 'partial')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Partial</span>
-                                @else
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Pending</span>
-                                @endif
-                            </td>
-                        </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        @endif
-
-        <!-- Bills Section (same layout as Supplier Details bills) -->
+        <!-- Bills Section (collapsible, oldest first like ledger) -->
         @if(isset($customerBills) && $customerBills->count() > 0)
-        <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-4">Bills</h3>
-            <div class="overflow-x-auto">
+        <div class="mt-6" x-data="{ billsOpen: false }">
+            <button
+                type="button"
+                @click="billsOpen = !billsOpen"
+                class="w-full flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3 text-left shadow-sm hover:bg-gray-50"
+            >
+                <div class="flex items-center gap-2">
+                    <h3 class="text-lg font-semibold text-gray-900">Bills</h3>
+                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                        {{ $customerBills->count() }}
+                    </span>
+                </div>
+                <svg
+                    class="h-5 w-5 text-gray-500 transition-transform duration-200"
+                    :class="{ 'rotate-180': billsOpen }"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </button>
+
+            <div
+                x-show="billsOpen"
+                x-cloak
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 -translate-y-1"
+                x-transition:enter-end="opacity-100 translate-y-0"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 translate-y-0"
+                x-transition:leave-end="opacity-0 -translate-y-1"
+                class="mt-3 overflow-x-auto border border-gray-200 rounded-lg"
+            >
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-gray-50">
-                        <tr>
+                        <tr class="divide-x divide-gray-200">
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Number</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Date</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill Amount</th>
@@ -259,7 +175,7 @@
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         @foreach($customerBills as $bill)
-                        <tr>
+                        <tr class="hover:bg-gray-50 divide-x divide-gray-200">
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $bill->sale_number }}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ $bill->sale_date->format('d M Y') }}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">PKR {{ number_format($bill->total_amount, 1) }}</td>
@@ -296,99 +212,67 @@
         </div>
         @endif
 
-        <!-- Payment & Invoice Logs -->
+        <!-- Ledger Section -->
         <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-4">Payment & Invoice Logs</h3>
-            @if($paymentLogs && $paymentLogs->count() > 0)
-            <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
+            <h3 class="text-lg font-semibold mb-4">Ledger</h3>
+            @if(count($ledgerEntries['rows']) > 0)
+            <div class="overflow-x-auto border border-gray-300 rounded-lg">
+                <table class="min-w-full border-collapse">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date & Time</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reference</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Comment</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Type</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Ref #</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase border border-gray-300">Narration</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Debit</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap border border-gray-300">Credit</th>
+                            <th class="px-4 py-3 text-right text-xs font-bold text-gray-900 uppercase whitespace-nowrap border border-gray-300">Balance</th>
                         </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        @foreach($paymentLogs as $log)
-                        <tr>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {{ $log->created_at->format('Y-m-d h:i A') }}
+                    <tbody class="bg-white">
+                        @foreach($ledgerEntries['rows'] as $row)
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 border border-gray-300">
+                                {{ $row['date'] ? $row['date']->format('d/m/Y') : '—' }}
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                @if($log->log_type == 'payment')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Payment</span>
-                                @elseif($log->log_type == 'cash_received')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Cash Received</span>
-                                @elseif($log->log_type == 'invoice_change')
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">Invoice Change</span>
+                            <td class="px-4 py-3 whitespace-nowrap border border-gray-300">
+                                @if($row['type'] === 'Sale')
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">Sale</span>
+                                @elseif($row['type'] === 'Payment')
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Payment</span>
                                 @else
-                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ ucfirst($log->log_type) }}</span>
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ $row['type'] }}</span>
                                 @endif
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {{ $log->reference_number ?? 'N/A' }}
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900 border border-gray-300">{{ $row['ref'] }}</td>
+                            <td class="px-4 py-3 text-sm text-gray-900 max-w-md border border-gray-300">{{ $row['narration'] }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-green-600 border border-gray-300">
+                                {{ $row['debit'] !== null ? 'PKR ' . number_format($row['debit'], 2) : '' }}
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                @if($log->log_type == 'invoice_change' && $log->previous_amount != $log->new_amount)
-                                    <div class="text-gray-900">
-                                        <span class="line-through text-red-600">PKR {{ number_format($log->previous_amount ?? 0, 2) }}</span><br>
-                                        <span class="text-green-600 font-semibold">PKR {{ number_format($log->new_amount ?? 0, 2) }}</span>
-                                    </div>
-                                @else
-                                    <span class="text-green-600 font-semibold">PKR {{ number_format($log->amount, 2) }}</span>
-                                @endif
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900 border border-gray-300">
+                                {{ $row['credit'] !== null ? 'PKR ' . number_format($row['credit'], 2) : '' }}
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                @if($log->payment_status)
-                                    @if($log->payment_status == 'paid')
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Paid</span>
-                                    @elseif($log->payment_status == 'partial')
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Partial</span>
-                                    @else
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Pending</span>
-                                    @endif
-                                @else
-                                    <span class="text-gray-400">-</span>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 text-sm text-gray-900">
-                                <div>{{ $log->description }}</div>
-                                @if($log->log_type == 'invoice_change' && $log->changes)
-                                    <div class="mt-1 text-xs text-gray-500">
-                                        @foreach($log->changes as $field => $change)
-                                            @if($field == 'status')
-                                                <div>Status: {{ $change['old'] }} → {{ $change['new'] }}</div>
-                                            @elseif(in_array($field, ['total_amount', 'subtotal', 'tax_amount', 'discount_amount']))
-                                                <div>{{ ucfirst(str_replace('_', ' ', $field)) }}: PKR {{ number_format($change['old'], 2) }} → PKR {{ number_format($change['new'], 2) }}</div>
-                                            @endif
-                                        @endforeach
-                                    </div>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 text-sm text-gray-600">
-                                @if($log->comment)
-                                    <div class="italic">{{ $log->comment }}</div>
-                                @else
-                                    <span class="text-gray-400">-</span>
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {{ $log->user->name ?? 'System' }}
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold border border-gray-300 {{ $row['balance'] > 0 ? 'text-red-600' : 'text-green-600' }}">
+                                PKR {{ number_format($row['balance'], 2) }}
                             </td>
                         </tr>
                         @endforeach
                     </tbody>
+                    <tfoot class="bg-gray-50">
+                        <tr>
+                            <td colspan="4" class="px-4 py-3 text-sm font-bold text-gray-900 text-right border border-gray-300">Total</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-green-600 border border-gray-300">PKR {{ number_format($ledgerEntries['total_debit'], 2) }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900 border border-gray-300">PKR {{ number_format($ledgerEntries['total_credit'], 2) }}</td>
+                            <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-bold border border-gray-300 {{ $ledgerEntries['final_balance'] > 0 ? 'text-red-600' : 'text-green-600' }}">
+                                PKR {{ number_format($ledgerEntries['final_balance'], 2) }}
+                            </td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
             @else
             <div class="text-center py-8 text-gray-500">
-                <p>No payment or invoice logs found.</p>
+                No ledger entries found.
             </div>
             @endif
         </div>

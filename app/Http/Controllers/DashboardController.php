@@ -8,6 +8,7 @@ use App\Models\SaleItem;
 use App\Models\Order;
 use App\Models\Customer;
 use App\Models\Supplier;
+use App\Services\BranchStockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -37,8 +38,8 @@ class DashboardController extends Controller
         // Total Sales Count
         $totalSales = Sale::count();
         
-        // Purchased Goods (Total Products)
-        $purchasedGoods = Product::sum('stock_quantity');
+        // Purchased Goods (Total Products) — current branch stock
+        $purchasedGoods = app(BranchStockService::class)->sumForBranch();
 
         // Dashboard KPIs (more actionable than raw counts)
         $totalCustomers = Customer::where('is_active', true)->count();
@@ -47,10 +48,12 @@ class DashboardController extends Controller
             ->selectRaw("SUM(CASE WHEN (total_amount - paid_amount) > 0 THEN (total_amount - paid_amount) ELSE 0 END) as receivable")
             ->value('receivable');
         
-        // Best Sellers (Top 5 products by sales)
-        $bestSellers = SaleItem::select('product_id', DB::raw('SUM(quantity) as total_sold'))
+        // Best Sellers (Top 5 products by sales) — current branch only
+        $bestSellers = SaleItem::select('sale_items.product_id', DB::raw('SUM(sale_items.quantity) as total_sold'))
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->with('product')
-            ->groupBy('product_id')
+            ->whereHas('sale')
+            ->groupBy('sale_items.product_id')
             ->orderBy('total_sold', 'desc')
             ->limit(5)
             ->get()
@@ -58,7 +61,7 @@ class DashboardController extends Controller
                 return [
                     'product' => $item->product,
                     'total_sold' => $item->total_sold,
-                    'total_revenue' => SaleItem::where('product_id', $item->product_id)->sum('total')
+                    'total_revenue' => SaleItem::where('product_id', $item->product_id)->whereHas('sale')->sum('total')
                 ];
             });
         

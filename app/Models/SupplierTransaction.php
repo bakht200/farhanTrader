@@ -2,13 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SupplierTransaction extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'supplier_id', 'supplier_bill_id', 'type', 'amount', 'description', 
+        'branch_id', 'supplier_id', 'supplier_bill_id', 'type', 'amount', 'description',
         'transaction_date', 'reference_number'
     ];
 

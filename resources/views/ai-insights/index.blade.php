@@ -1,19 +1,52 @@
 <x-app-layout>
     <x-slot name="header">AI Insights</x-slot>
 
+    <style>[x-cloak] { display: none !important; }</style>
+
     <!-- Top Summary -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Profit</p>
-            <p class="mt-2 text-3xl font-black text-emerald-600 tabular-nums">PKR {{ number_format($topStats['total_profit'], 0) }}</p>
+    <div class="mb-8" x-data="{ showStats: false }">
+        <div class="flex items-center justify-between mb-3">
+            <p class="text-sm font-medium text-gray-600">Summary</p>
+            <button
+                type="button"
+                @click="showStats = !showStats"
+                class="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                :title="showStats ? 'Hide values' : 'Show values'"
+            >
+                <!-- Eye (show) -->
+                <svg x-show="!showStats" class="h-5 w-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                </svg>
+                <!-- Eye off (hide) -->
+                <svg x-show="showStats" x-cloak class="h-5 w-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                </svg>
+                <span x-text="showStats ? 'Hide' : 'Show'"></span>
+            </button>
         </div>
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Lost</p>
-            <p class="mt-2 text-3xl font-black text-red-600 tabular-nums">PKR {{ number_format($topStats['total_lost'], 0) }}</p>
-        </div>
-        <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Stock</p>
-            <p class="mt-2 text-3xl font-black text-indigo-600 tabular-nums">{{ number_format($topStats['total_stock'], 0) }}</p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Profit</p>
+                <p class="mt-2 text-3xl font-black text-emerald-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['total_profit'], 0) }}</p>
+                <p class="mt-2 text-3xl font-black text-emerald-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Lost</p>
+                <p class="mt-2 text-3xl font-black text-red-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['total_lost'], 0) }}</p>
+                <p class="mt-2 text-3xl font-black text-red-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Stock</p>
+                <p class="mt-2 text-3xl font-black text-indigo-600 tabular-nums" x-show="showStats" x-cloak>{{ number_format($topStats['total_stock'], 0) }}</p>
+                <p class="mt-2 text-3xl font-black text-indigo-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Stock Value</p>
+                <p class="mt-2 text-3xl font-black text-amber-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['total_stock_value'] ?? 0, 0) }}</p>
+                <p class="mt-2 text-3xl font-black text-amber-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+            </div>
         </div>
     </div>
 

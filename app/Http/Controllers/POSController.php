@@ -10,6 +10,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Services\CustomerBalanceService;
 use App\Services\UnitConversionService;
+use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +23,7 @@ class POSController extends Controller
         $search = $request->get('search', '');
 
         $query = Product::where('is_active', true)
-            ->with(['category', 'unit', 'productUnits.unit']);
+            ->with(['category', 'unit', 'productUnits.unit', 'currentBranchStock']);
 
         // Category filter
         if ($categoryId !== 'all') {
@@ -290,7 +291,7 @@ class POSController extends Controller
                     if ($oldItem->product_id && $oldItem->product) {
                         // Use quantity_in_base_unit if available, otherwise use quantity
                         $quantityToRestore = $oldItem->quantity_in_base_unit ?? $oldItem->quantity;
-                        $oldItem->product->increment('stock_quantity', $quantityToRestore);
+                        $oldItem->product->incrementStock( $quantityToRestore);
                     }
                 }
                 
@@ -409,7 +410,7 @@ class POSController extends Controller
                 ]);
 
                 // Update product stock using base unit quantity
-                $product->decrement('stock_quantity', $quantityInBaseUnit);
+                $product->decrementStock( $quantityInBaseUnit);
             }
         }
 
@@ -966,6 +967,75 @@ class POSController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error deleting hold order: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Last sold price of a product for a customer (current branch via Sale global scope).
+     */
+    public function getLastProductPrice(Request $request, $customerId, $productId)
+    {
+        try {
+            $unitId = $request->integer('unit_id') ?: null;
+            $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+
+            $baseQuery = function () use ($customerId, $productId, $branchId) {
+                return SaleItem::query()
+                    ->select('sale_items.*')
+                    ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+                    ->where('sales.branch_id', $branchId)
+                    ->where('sales.customer_id', $customerId)
+                    ->where('sale_items.product_id', $productId)
+                    ->where('sales.status', 'completed')
+                    ->where('sales.sale_number', 'not like', 'ADJ-%')
+                    ->with(['sale', 'unit']);
+            };
+
+            $query = $baseQuery();
+            if ($unitId) {
+                $query->where('sale_items.unit_id', $unitId);
+            }
+
+            $item = $query
+                ->orderByDesc('sales.sale_date')
+                ->orderByDesc('sales.id')
+                ->first();
+
+            // Fallback: any unit if exact unit has no history
+            if (!$item && $unitId) {
+                $item = $baseQuery()
+                    ->orderByDesc('sales.sale_date')
+                    ->orderByDesc('sales.id')
+                    ->first();
+            }
+
+            if (!$item) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No previous price found for this customer and product.',
+                ], 404);
+            }
+
+            $sale = $item->sale;
+            $unitName = $item->unit?->short_name
+                ?? ($item->unit_id ? (Unit::find($item->unit_id)?->short_name) : null)
+                ?? 'Pcs';
+
+            return response()->json([
+                'success' => true,
+                'unit_price' => (float) $item->unit_price,
+                'quantity' => (float) $item->quantity,
+                'unit_id' => $item->unit_id,
+                'unit_name' => $unitName,
+                'sale_number' => $sale?->sale_number,
+                'sale_date' => $sale?->sale_date?->format('d M Y'),
+                'matched_unit' => $unitId ? ((int) $item->unit_id === (int) $unitId) : true,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching last price: ' . $e->getMessage(),
             ], 500);
         }
     }

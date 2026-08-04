@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>POS - {{ config('app.name', 'Laravel') }}</title>
     <!-- Favicon -->
-    <link rel="icon" type="image/png" href="{{ asset('build/assets/logo.png') }}">
+    <link rel="icon" type="image/png" href="{{ asset('logo.png') }}">
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
     @vite(['resources/css/app.css', 'resources/js/app.js'])
@@ -31,7 +31,7 @@
         <div class="flex items-center space-x-4">
             <!-- Logo -->
             <div class="flex items-center space-x-2">
-                <img src="{{ asset('build/assets/logo.png') }}" alt="Farhan Traders Logo" class="h-10 w-auto">
+                <img src="{{ asset('logo.png') }}" alt="Farhan Traders Logo" class="h-10 w-auto">
             </div>
             <!-- Time -->
             <div class="bg-green-500 rounded-full px-4 py-1 text-sm font-medium" id="current-time">
@@ -1335,12 +1335,27 @@
                             }
                         </td>
                         <td class="px-4 py-3 whitespace-nowrap">
-                            <input type="number" 
-                                   value="${parseFloat(sellingPrice || 0).toFixed(2)}" 
-                                   min="${minPrice}"
-                                   step="0.01"
-                                   ${priceValidation}
-                                   class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                            <div class="relative inline-flex items-center gap-1">
+                                <input type="number"
+                                       id="selling-price-input-${index}"
+                                       value="${parseFloat(sellingPrice || 0).toFixed(2)}"
+                                       min="${minPrice}"
+                                       step="0.01"
+                                       ${priceValidation}
+                                       class="w-24 px-2 py-1 border border-gray-300 rounded text-sm">
+                                ${(!isCustom && document.getElementById('customer-id')?.value) ? `
+                                    <button type="button"
+                                            onclick="event.stopPropagation(); toggleLastPriceHint(${index})"
+                                            class="p-1 rounded text-gray-500 hover:text-orange-600 hover:bg-orange-50"
+                                            title="Show last sold price for this customer">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                    </button>
+                                    <div id="last-price-hint-${index}" class="hidden absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-gray-200 bg-white shadow-lg p-3 text-left"></div>
+                                ` : ''}
+                            </div>
                         </td>
                         <td class="px-4 py-3 whitespace-nowrap">
                             <div class="flex items-center space-x-1">
@@ -1403,6 +1418,106 @@
         function formatCurrency(amount) {
             return 'PKR ' + parseFloat(amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
         }
+
+        // Cache last customer+product prices for POS eye hint
+        const lastPriceCache = {};
+
+        function closeAllLastPriceHints(exceptIndex = null) {
+            document.querySelectorAll('[id^="last-price-hint-"]').forEach((el) => {
+                const idx = parseInt(el.id.replace('last-price-hint-', ''), 10);
+                if (exceptIndex !== null && idx === exceptIndex) return;
+                el.classList.add('hidden');
+                el.innerHTML = '';
+            });
+        }
+
+        async function toggleLastPriceHint(index) {
+            const item = cart[index];
+            const hintEl = document.getElementById(`last-price-hint-${index}`);
+            const customerId = document.getElementById('customer-id')?.value;
+
+            if (!hintEl || !item || item.product_id === null || item.is_custom) return;
+
+            if (!customerId) {
+                alert('Please select a customer first to see last sold price.');
+                return;
+            }
+
+            if (!hintEl.classList.contains('hidden')) {
+                hintEl.classList.add('hidden');
+                hintEl.innerHTML = '';
+                return;
+            }
+
+            closeAllLastPriceHints(index);
+            hintEl.classList.remove('hidden');
+            hintEl.innerHTML = `<div class="text-xs text-gray-500">Loading last price...</div>`;
+
+            const cacheKey = `${customerId}-${item.product_id}-${item.unit_id || 'any'}`;
+            let data = lastPriceCache[cacheKey];
+
+            if (!data) {
+                try {
+                    let url = `{{ url('/sales/pos/last-price') }}/${customerId}/${item.product_id}`;
+                    if (item.unit_id) {
+                        url += `?unit_id=${encodeURIComponent(item.unit_id)}`;
+                    }
+                    const response = await fetch(url, {
+                        headers: {
+                            'Accept': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                        },
+                    });
+                    data = await response.json();
+                    if (response.ok && data.success) {
+                        lastPriceCache[cacheKey] = data;
+                    }
+                } catch (e) {
+                    hintEl.innerHTML = `<div class="text-xs text-red-600">Could not load last price.</div>`;
+                    return;
+                }
+            }
+
+            if (!data || !data.success) {
+                hintEl.innerHTML = `
+                    <div class="text-xs text-gray-600">No previous price for this customer.</div>
+                `;
+                return;
+            }
+
+            const unitNote = data.matched_unit === false
+                ? `<div class="text-[11px] text-amber-600 mt-1">Last sold in ${data.unit_name || 'another unit'}</div>`
+                : '';
+
+            hintEl.innerHTML = `
+                <div class="text-xs font-semibold text-gray-800 mb-1">Last sold to this customer</div>
+                <div class="text-sm font-bold text-orange-600">${formatCurrency(data.unit_price)} / ${data.unit_name || ''}</div>
+                <div class="text-[11px] text-gray-500 mt-1">
+                    ${data.sale_number || ''} ${data.sale_date ? '· ' + data.sale_date : ''}
+                </div>
+                ${unitNote}
+                <button type="button"
+                        onclick="useLastSoldPrice(${index}, ${parseFloat(data.unit_price)})"
+                        class="mt-2 w-full text-xs bg-orange-500 hover:bg-orange-600 text-white px-2 py-1.5 rounded">
+                    Use this price
+                </button>
+            `;
+        }
+
+        function useLastSoldPrice(index, price) {
+            const item = cart[index];
+            if (!item) return;
+            item.selling_price = parseFloat(parseFloat(price || 0).toFixed(2));
+            item.skip_sell_vs_purchase_warning = true;
+            closeAllLastPriceHints();
+            renderCart();
+        }
+
+        document.addEventListener('click', function (e) {
+            if (!e.target.closest('[id^="last-price-hint-"]') && !e.target.closest('button[onclick*="toggleLastPriceHint"]')) {
+                closeAllLastPriceHints();
+            }
+        });
 
         // Format date time: 2026-02-01 05:23 PM
         function formatDateTime(dateString) {
@@ -2349,6 +2464,8 @@
             
             // Store previous balance
             customerPreviousBalance = parseFloat(customer.previous_balance || 0);
+            Object.keys(lastPriceCache).forEach((key) => delete lastPriceCache[key]);
+            closeAllLastPriceHints();
             hideCustomerDropdown();
             renderCart(); // Refresh Grand Total to include previous balance
         }
@@ -2516,6 +2633,9 @@
             updateSelectedCustomerTypeLabel(null);
             setCustomerTypeFilter('all', { focusSearch: false, openDropdown: false });
             customerPreviousBalance = 0;
+            Object.keys(lastPriceCache).forEach((key) => delete lastPriceCache[key]);
+            closeAllLastPriceHints();
+            renderCart();
         }
         
         function openNewCustomerModal() {

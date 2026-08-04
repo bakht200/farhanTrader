@@ -18,6 +18,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserActivityController;
 use App\Http\Controllers\AiInsightsController;
 use App\Http\Controllers\HealthCheckController;
+use App\Http\Controllers\BranchController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -76,6 +77,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/load-hold-order/{id}', [POSController::class, 'loadHoldOrder'])->name('load-hold-order');
             Route::delete('/hold-order/{id}', [POSController::class, 'deleteHoldOrder'])->name('delete-hold-order');
             Route::get('/last-order-items/{customerId}', [POSController::class, 'getLastOrderItems'])->name('last-order-items');
+            Route::get('/last-price/{customerId}/{productId}', [POSController::class, 'getLastProductPrice'])->name('last-price');
         });
         Route::prefix('invoices')->name('invoices.')->group(function () {
             Route::resource('', InvoiceController::class)->parameters(['' => 'invoice']);
@@ -119,6 +121,18 @@ Route::middleware('auth')->group(function () {
 
     // System routes
     Route::get('health-check', [HealthCheckController::class, 'index'])->name('health-check.index');
+
+    // Branches (admin only)
+    Route::middleware('admin')->group(function () {
+        Route::get('branches', [BranchController::class, 'index'])->name('branches.index');
+        Route::get('branches/create', [BranchController::class, 'create'])->name('branches.create');
+        Route::post('branches', [BranchController::class, 'store'])->name('branches.store');
+        Route::get('branches/{branch}/edit', [BranchController::class, 'edit'])->name('branches.edit');
+        Route::put('branches/{branch}', [BranchController::class, 'update'])->name('branches.update');
+        Route::post('branches/{branch}/users', [BranchController::class, 'addUser'])->name('branches.users.add');
+        Route::delete('branches/{branch}/users/{user}', [BranchController::class, 'removeUser'])->name('branches.users.remove');
+        Route::post('branches/switch', [BranchController::class, 'switch'])->name('branches.switch');
+    });
 });
 
 require __DIR__.'/auth.php';

@@ -205,33 +205,15 @@ class CustomerController extends Controller
 
     public function show(Customer $customer)
     {
-        $chronologicalSales = Sale::where('customer_id', $customer->id)
-            ->where('sale_number', 'not like', 'ADJ-%')
-            ->orderBy('sale_date', 'asc')
-            ->orderBy('id', 'asc')
-            ->get();
-        Sale::attachCalculatedBalances($chronologicalSales);
-
         $balanceSummary = $this->calculateCustomerBalanceSummary($customer->id);
         $customer->total_price = $balanceSummary['total_price'];
         $customer->paid_amount = $balanceSummary['paid_amount'];
         $customer->unpaid_amount = $balanceSummary['unpaid_amount'];
 
-        $displaySales = $chronologicalSales->reverse()->values();
-
-        $customer->setRelation('sales', $displaySales);
-
-        $paymentLogs = \App\Models\CustomerPaymentLog::where('customer_id', $customer->id)
-            ->with(['user', 'sale', 'invoice'])
-            ->latest()
-            ->get();
-
-        $adjAllocationsFromLogs = $this->adjAllocationsGroupedBySourceSale($customer->id);
-
         $customerBills = Sale::where('customer_id', $customer->id)
             ->where('sale_number', 'not like', 'ADJ-%')
-            ->orderBy('sale_date', 'desc')
-            ->orderBy('id', 'desc')
+            ->orderBy('sale_date', 'asc')
+            ->orderBy('id', 'asc')
             ->get();
 
         foreach ($customerBills as $bill) {
@@ -241,7 +223,237 @@ class CustomerController extends Controller
             $bill->setAttribute('bill_remaining', round(max(0, $total - $paid), 2));
         }
 
-        return view('customers.show', compact('customer', 'paymentLogs', 'adjAllocationsFromLogs', 'customerBills'));
+        $ledgerEntries = $this->buildCustomerLedger($customer, $customerBills);
+
+        return view('customers.show', compact('customer', 'customerBills', 'ledgerEntries'));
+    }
+
+    /**
+     * Build a chronological debit/credit ledger for the customer detail page.
+     * Credit = bill (sale) amounts owed; Debit = payments received.
+     * An "Opening Balance" row absorbs any historical amounts that predate
+     * payment logging so the final balance always matches the wallet remaining.
+     *
+     * @param \Illuminate\Support\Collection<int, Sale> $customerBills
+     * @return array{rows: list<array<string, mixed>>, total_debit: float, total_credit: float, final_balance: float}
+     */
+    protected function buildCustomerLedger(Customer $customer, $customerBills): array
+    {
+        $entries = [];
+
+        $paymentLogs = \App\Models\CustomerPaymentLog::where('customer_id', $customer->id)
+            ->whereIn('log_type', ['payment', 'cash_received'])
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        // Map sale_id / sale_number -> first non-empty POS comment for that sale
+        $commentsBySaleId = [];
+        $commentsBySaleNumber = [];
+        foreach ($paymentLogs as $log) {
+            $comment = trim((string) ($log->comment ?? ''));
+            if ($comment === '') {
+                continue;
+            }
+            if ($log->sale_id && ! isset($commentsBySaleId[$log->sale_id])) {
+                $commentsBySaleId[$log->sale_id] = $comment;
+            }
+            $ref = trim((string) ($log->reference_number ?? ''));
+            if ($ref !== '' && ! isset($commentsBySaleNumber[$ref])) {
+                $commentsBySaleNumber[$ref] = $comment;
+            }
+        }
+
+        foreach ($customerBills as $sale) {
+            $narration = $commentsBySaleId[$sale->id]
+                ?? $commentsBySaleNumber[$sale->sale_number]
+                ?? 'Sale';
+
+            // Prefer created_at so same-day payments appear in real checkout order
+            // (sale_date is date-only and would sort every bill before that day's payments).
+            $saleAt = $sale->created_at ?? $sale->sale_date;
+
+            $entries[] = [
+                'timestamp' => $saleAt->timestamp,
+                'tiebreak' => $sale->id,
+                'date' => $saleAt,
+                'type' => 'Sale',
+                'ref' => $sale->sale_number,
+                'narration' => $narration,
+                'debit' => null,
+                'credit' => (float) $sale->total_amount,
+            ];
+        }
+
+        // POS/Sale payment may split one typed amount into:
+        // (1) a direct "Cash/Payment received for Sale: X" log, and
+        // (2) one+ "Previous balance payment from Sale: X" logs applied to older bills.
+        // Merge only logs from the same checkout (same origin sale, within a few seconds)
+        // so later payments on the same sale stay separate.
+        $saleRefPattern = '([A-Z]+-\d+)';
+        $mergeWindowSeconds = 5;
+
+        $directsBySale = [];
+        foreach ($paymentLogs as $log) {
+            $description = (string) ($log->description ?? '');
+            $ref = trim((string) ($log->reference_number ?? ''));
+            $directSale = null;
+
+            if (preg_match('/(?:Cash|Payment) received for Sale:\s*' . $saleRefPattern . '/i', $description, $m)) {
+                $directSale = strtoupper($m[1]);
+            } elseif (
+                in_array($log->log_type, ['cash_received', 'payment'], true)
+                && $ref !== ''
+                && preg_match('/^' . $saleRefPattern . '$/i', $ref)
+                && ! preg_match('/Previous balance payment from Sale:/i', $description)
+                && ! preg_match('/Applied PKR .+ to Sale:/i', $description)
+            ) {
+                $directSale = strtoupper($ref);
+            }
+
+            if ($directSale) {
+                $directsBySale[$directSale][] = $log;
+            }
+        }
+
+        $groupKeyByLogId = [];
+        foreach ($paymentLogs as $log) {
+            $description = (string) ($log->description ?? '');
+            if (! preg_match('/Previous balance payment from Sale:\s*' . $saleRefPattern . '/i', $description, $m)) {
+                continue;
+            }
+
+            $originSale = strtoupper($m[1]);
+            $bestDirect = null;
+            $bestDiff = PHP_INT_MAX;
+
+            foreach ($directsBySale[$originSale] ?? [] as $directLog) {
+                $diff = abs($log->created_at->getTimestamp() - $directLog->created_at->getTimestamp());
+                if ($diff <= $mergeWindowSeconds && $diff < $bestDiff) {
+                    $bestDirect = $directLog;
+                    $bestDiff = $diff;
+                }
+            }
+
+            if ($bestDirect) {
+                $groupKey = 'pos:' . $bestDirect->id;
+                $groupKeyByLogId[$log->id] = $groupKey;
+                $groupKeyByLogId[$bestDirect->id] = $groupKey;
+            } else {
+                // Surplus without a matching direct payment (rare) — keep same-checkout
+                // surplus rows together by origin + rounded time bucket.
+                $bucket = (int) floor($log->created_at->timestamp / $mergeWindowSeconds);
+                $groupKeyByLogId[$log->id] = 'pos-surplus:' . $originSale . '|' . $bucket;
+            }
+        }
+
+        $paymentGroups = [];
+        foreach ($paymentLogs as $log) {
+            $description = (string) ($log->description ?? '');
+            $ref = trim((string) ($log->reference_number ?? ''));
+            $groupKey = $groupKeyByLogId[$log->id] ?? ('log:' . $log->id);
+
+            $displayRef = $ref !== '' ? $ref : '-';
+            if (str_starts_with($groupKey, 'pos:') || str_starts_with($groupKey, 'pos-surplus:')) {
+                if (preg_match('/Previous balance payment from Sale:\s*' . $saleRefPattern . '/i', $description, $m)
+                    || preg_match('/(?:Cash|Payment) received for Sale:\s*' . $saleRefPattern . '/i', $description, $m)
+                ) {
+                    $displayRef = strtoupper($m[1]);
+                } elseif (preg_match('/^' . $saleRefPattern . '$/i', $ref)) {
+                    $displayRef = strtoupper($ref);
+                }
+            }
+
+            if (! isset($paymentGroups[$groupKey])) {
+                $paymentGroups[$groupKey] = [
+                    'amount' => 0.0,
+                    'created_at' => $log->created_at,
+                    'ref' => $displayRef,
+                    'comment' => trim((string) ($log->comment ?? '')),
+                ];
+            }
+
+            $paymentGroups[$groupKey]['amount'] += (float) $log->amount;
+
+            if ($log->created_at->lt($paymentGroups[$groupKey]['created_at'])) {
+                $paymentGroups[$groupKey]['created_at'] = $log->created_at;
+            }
+
+            // Prefer the originating sale number as the visible ref for merged rows
+            if (
+                (str_starts_with($groupKey, 'pos:') || str_starts_with($groupKey, 'pos-surplus:'))
+                && preg_match('/(?:Cash|Payment) received for Sale:\s*' . $saleRefPattern . '/i', $description, $m)
+            ) {
+                $paymentGroups[$groupKey]['ref'] = strtoupper($m[1]);
+            } elseif (
+                str_starts_with($groupKey, 'pos-surplus:')
+                && preg_match('/Previous balance payment from Sale:\s*' . $saleRefPattern . '/i', $description, $m)
+            ) {
+                $paymentGroups[$groupKey]['ref'] = strtoupper($m[1]);
+            }
+
+            $comment = trim((string) ($log->comment ?? ''));
+            if ($comment !== '' && $paymentGroups[$groupKey]['comment'] === '') {
+                $paymentGroups[$groupKey]['comment'] = $comment;
+            }
+        }
+
+        foreach ($paymentGroups as $group) {
+            $comment = $group['comment'];
+            $entries[] = [
+                'timestamp' => $group['created_at']->timestamp,
+                'tiebreak' => PHP_INT_MAX, // payments on the same second appear after that second's bills
+                'date' => $group['created_at'],
+                'type' => 'Payment',
+                'ref' => $group['ref'] ?? '-',
+                'narration' => $comment !== '' ? $comment : 'Payment received',
+                'debit' => round($group['amount'], 2),
+                'credit' => null,
+            ];
+        }
+
+        usort($entries, function ($a, $b) {
+            return [$a['timestamp'], $a['tiebreak']] <=> [$b['timestamp'], $b['tiebreak']];
+        });
+
+        $totalCredit = array_sum(array_map(fn ($e) => $e['credit'] ?? 0, $entries));
+        $totalDebit = array_sum(array_map(fn ($e) => $e['debit'] ?? 0, $entries));
+
+        // Payments recorded before logging existed leave a gap between
+        // (credits - debits) and the real remaining balance; absorb it up front.
+        $opening = round(((float) $customer->unpaid_amount) - ($totalCredit - $totalDebit), 2);
+        if (abs($opening) >= 0.01) {
+            $openingEntry = [
+                'timestamp' => 0,
+                'tiebreak' => 0,
+                'date' => null,
+                'type' => 'Opening',
+                'ref' => '-',
+                'narration' => 'Opening balance',
+                'debit' => $opening < 0 ? abs($opening) : null,
+                'credit' => $opening > 0 ? $opening : null,
+            ];
+            array_unshift($entries, $openingEntry);
+            if ($opening > 0) {
+                $totalCredit += $opening;
+            } else {
+                $totalDebit += abs($opening);
+            }
+        }
+
+        $running = 0.0;
+        foreach ($entries as &$entry) {
+            $running += ($entry['credit'] ?? 0) - ($entry['debit'] ?? 0);
+            $entry['balance'] = round($running, 2);
+        }
+        unset($entry);
+
+        return [
+            'rows' => $entries,
+            'total_debit' => round($totalDebit, 2),
+            'total_credit' => round($totalCredit, 2),
+            'final_balance' => round($running, 2),
+        ];
     }
 
     public function dayWiseBills(Request $request, Customer $customer)

@@ -2,13 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Supplier extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'supplier_id', 'name', 'company_name', 'email', 'phone', 'address',
+        'branch_id', 'supplier_id', 'name', 'company_name', 'email', 'phone', 'address',
         'city', 'state', 'country', 'postal_code', 'tax_id', 'is_active'
     ];
 

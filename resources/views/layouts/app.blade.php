@@ -8,7 +8,7 @@
         <title>@isset($header){{ $header }} - @endisset{{ config('app.name', 'Laravel') }}</title>
 
         <!-- Favicon -->
-        <link rel="icon" type="image/png" href="{{ asset('build/assets/logo.png') }}">
+        <link rel="icon" type="image/png" href="{{ asset('logo.png') }}">
 
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">
@@ -98,6 +98,58 @@
                                 </h2>
                             </div>
                             <div class="flex items-center space-x-4">
+                                @auth
+                                    @if(Auth::user()->isAdmin())
+                                        <div class="relative" x-data="{ open: false }">
+                                            <button
+                                                @click="open = !open"
+                                                type="button"
+                                                class="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                            >
+                                                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                                </svg>
+                                                <span>{{ $currentBranch?->name ?? 'Phandu' }}</span>
+                                                <svg class="w-4 h-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                                </svg>
+                                            </button>
+                                            <div
+                                                x-show="open"
+                                                @click.outside="open = false"
+                                                x-cloak
+                                                class="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50"
+                                            >
+                                                <div class="py-1">
+                                                    <div class="px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Switch Branch</div>
+                                                    @foreach($branchesForSwitcher ?? [] as $branch)
+                                                        <form method="POST" action="{{ route('branches.switch') }}">
+                                                            @csrf
+                                                            <input type="hidden" name="branch_id" value="{{ $branch->id }}">
+                                                            <button
+                                                                type="submit"
+                                                                class="w-full text-left px-4 py-2 text-sm {{ (int) ($currentBranchId ?? 0) === (int) $branch->id ? 'bg-orange-50 text-orange-700 font-medium' : 'text-gray-700 hover:bg-gray-100' }}"
+                                                            >
+                                                                {{ $branch->name }}
+                                                                @if((int) ($currentBranchId ?? 0) === (int) $branch->id)
+                                                                    <span class="text-xs text-orange-500 ml-1">(current)</span>
+                                                                @endif
+                                                            </button>
+                                                        </form>
+                                                    @endforeach
+                                                    <div class="border-t border-gray-100 my-1"></div>
+                                                    <a href="{{ route('branches.index') }}" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                                        Manage Branches
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    @elseif($currentBranch)
+                                        <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm text-gray-600 bg-gray-50 border border-gray-200">
+                                            {{ $currentBranch->name }}
+                                        </span>
+                                    @endif
+                                @endauth
                                 <!-- User Menu -->
                                 <x-dropdown align="right" width="48">
                                     <x-slot name="trigger">

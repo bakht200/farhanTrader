@@ -2,13 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Customer extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'customer_id', 'name', 'customer_type', 'email', 'phone', 'address', 'city',
+        'branch_id', 'customer_id', 'name', 'customer_type', 'email', 'phone', 'address', 'city',
         'state', 'country', 'postal_code', 'credit_limit', 'is_active'
     ];
 

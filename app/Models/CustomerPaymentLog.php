@@ -2,13 +2,16 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CustomerPaymentLog extends Model
 {
+    use BelongsToBranch;
+
     protected $fillable = [
-        'customer_id', 'user_id', 'log_type', 'sale_id', 'invoice_id',
+        'branch_id', 'customer_id', 'user_id', 'log_type', 'sale_id', 'invoice_id',
         'reference_number', 'amount', 'previous_amount', 'new_amount',
         'payment_status', 'description', 'comment', 'changes'
     ];

@@ -101,7 +101,7 @@ class UnitConversionService
             throw new \Exception("Product {$productId} does not have a base unit defined");
         }
 
-        $stockInBaseUnit = (float) $product->stock_quantity;
+        $stockInBaseUnit = (float) $product->currentStock();
 
         if ($unitId === $baseUnitId) {
             return $stockInBaseUnit;
