@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Offline — Farhan Traders</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #F5F1E8; color: #111827; }
+        .wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+        .card { background: #fff; max-width: 440px; width: 100%; border-radius: 12px; padding: 32px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+        h1 { font-size: 1.5rem; margin: 0 0 8px; }
+        p { color: #4B5563; line-height: 1.5; }
+        button { width: 100%; margin-top: 16px; background: #f97316; color: #fff; border: 0; border-radius: 8px; padding: 12px 16px; font-weight: 600; cursor: pointer; }
+        button:hover { background: #ea580c; }
+        a { color: #ea580c; }
+        .muted { font-size: 0.875rem; color: #6B7280; margin-top: 16px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <h1>You are offline</h1>
+        <p id="msg">This page is not available offline yet, or offline access is not set up on this device.</p>
+        <p>If you have signed in on this device before, open <a href="/login">Login</a> to unlock offline mode. Cached screens you visited while online may still open.</p>
+        <button type="button" id="retry">Retry connection</button>
+        <p class="muted">Every shop device must connect and log in once online before relying on offline mode.</p>
+    </div>
+</div>
+<script>
+    document.getElementById('retry').addEventListener('click', async () => {
+        try {
+            const res = await fetch('/up', { cache: 'no-store' });
+            if (res.ok) {
+                window.location.reload();
+                return;
+            }
+        } catch (e) {}
+        document.getElementById('msg').textContent = 'Still offline. Check your connection and try again.';
+    });
+</script>
+</body>
+</html>

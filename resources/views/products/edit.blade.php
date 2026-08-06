@@ -167,6 +167,7 @@
                 <div>
                     <label for="selling_type" class="block text-sm font-medium text-gray-700 mb-2">
                         Selling Type <span class="text-red-500">*</span>
+                        <span class="text-xs font-normal text-gray-500">(for current branch)</span>
                     </label>
                     <select id="selling_type" 
                             name="selling_type" 

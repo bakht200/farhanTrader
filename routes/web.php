@@ -19,6 +19,7 @@ use App\Http\Controllers\UserActivityController;
 use App\Http\Controllers\AiInsightsController;
 use App\Http\Controllers\HealthCheckController;
 use App\Http\Controllers\BranchController;
+use App\Http\Controllers\SyncController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -28,6 +29,15 @@ Route::get('/', function () {
 Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::middleware('auth')->group(function () {
+    // Offline sync API
+    Route::prefix('sync')->name('sync.')->group(function () {
+        Route::get('/ping', [SyncController::class, 'ping'])->name('ping');
+        Route::get('/bootstrap', [SyncController::class, 'bootstrap'])->name('bootstrap');
+        Route::get('/pull', [SyncController::class, 'pull'])->name('pull');
+        Route::post('/push', [SyncController::class, 'push'])->name('push');
+        Route::post('/enroll-vault', [SyncController::class, 'enrollVault'])->name('enroll-vault');
+    });
+
     // Profile routes
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

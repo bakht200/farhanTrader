@@ -17,7 +17,7 @@
         <!-- Scripts -->
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
-    <body class="font-sans antialiased" x-data="{
+    <body class="font-sans antialiased" id="ftpos-app-shell" x-data="{
         sidebarOpen: (() => {
             let savedState = localStorage.getItem('sidebarOpen');
             if (savedState !== null) {
@@ -98,6 +98,13 @@
                                 </h2>
                             </div>
                             <div class="flex items-center space-x-4">
+                                <button type="button"
+                                    id="ftpos-connectivity-status"
+                                    class="rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap bg-green-600 text-white"
+                                    title="Connection status">
+                                    Online
+                                </button>
+                                <span id="ftpos-pending-sync" class="hidden rounded-full px-3 py-1 text-xs font-semibold"></span>
                                 @auth
                                     @if(Auth::user()->isAdmin())
                                         <div class="relative" x-data="{ open: false }">
@@ -167,11 +174,18 @@
                                         </x-dropdown-link>
 
                                         <!-- Authentication -->
-                                        <form method="POST" action="{{ route('logout') }}">
+                                        <form method="POST" action="{{ route('logout') }}" id="ftpos-logout-form">
                                             @csrf
                                             <x-dropdown-link :href="route('logout')"
                                                     onclick="event.preventDefault();
-                                                            this.closest('form').submit();">
+                                                            window.__ftposLoggingOut = true;
+                                                            const form = this.closest('form');
+                                                            const submitLogout = () => form && form.submit();
+                                                            if (window.FTOffline && typeof window.FTOffline.clearLocalSession === 'function') {
+                                                                Promise.resolve(window.FTOffline.clearLocalSession()).finally(submitLogout);
+                                                            } else {
+                                                                submitLogout();
+                                                            }">
                                                 {{ __('Log Out') }}
                                             </x-dropdown-link>
                                         </form>
@@ -190,7 +204,7 @@
                     <footer class="mt-auto py-4 px-6 border-t border-gray-200 bg-white flex-shrink-0">
                         <div class="flex flex-col md:flex-row justify-between items-center text-sm text-gray-600 gap-2">
                             <div>2025 © FTPOS. All Right Reserved</div>
-                            <div>Designed & Developed By Shahzeb</div>
+                            <div>Design &amp; developed by <a href="https://wa.me/923330915166" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-700 font-medium underline">Bakht Biland</a></div>
                         </div>
                     </footer>
                 </div>

@@ -11,6 +11,7 @@ class BranchProductStock extends Model
         'branch_id',
         'product_id',
         'stock_quantity',
+        'selling_type',
     ];
 
     protected function casts(): array

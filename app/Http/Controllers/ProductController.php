@@ -194,7 +194,12 @@ class ProductController extends Controller
             $validated['stock_quantity'] = 0; // legacy column; live stock is per-branch
 
             $product = Product::create($validated);
-            app(BranchStockService::class)->initializeProduct($product, $initialStock);
+            app(BranchStockService::class)->initializeProduct(
+                $product,
+                $initialStock,
+                null,
+                $validated['selling_type'] ?? 'both'
+            );
             
             // Create ProductUnit records
             // First, always create base unit ProductUnit
@@ -581,6 +586,7 @@ class ProductController extends Controller
 
             $product->update($validated);
             $product->setBranchStock($branchStockQty);
+            $product->setBranchSellingType($validated['selling_type'] ?? 'both');
             
             // Update ProductUnit records
             // First, update or create base unit ProductUnit
@@ -588,14 +594,15 @@ class ProductController extends Controller
             
             // Determine base unit price
             $baseUnitPrice = null;
-            if ($product->selling_type === 'retail' && $product->retail_price) {
-                $baseUnitPrice = $product->retail_price;
-            } elseif ($product->selling_type === 'wholesale' && $product->wholesale_price) {
-                $baseUnitPrice = $product->wholesale_price;
-            } elseif ($product->selling_type === 'both' && $product->retail_price) {
-                $baseUnitPrice = $product->retail_price;
+            $sellingTypeForPrice = $validated['selling_type'] ?? 'retail';
+            if ($sellingTypeForPrice === 'retail' && !empty($validated['retail_price'])) {
+                $baseUnitPrice = $validated['retail_price'];
+            } elseif ($sellingTypeForPrice === 'wholesale' && !empty($validated['wholesale_price'])) {
+                $baseUnitPrice = $validated['wholesale_price'];
+            } elseif ($sellingTypeForPrice === 'both' && !empty($validated['retail_price'])) {
+                $baseUnitPrice = $validated['retail_price'];
             } else {
-                $baseUnitPrice = $product->selling_price ?? 0;
+                $baseUnitPrice = $validated['selling_price'] ?? 0;
             }
             
             // Check if base unit price is in units array

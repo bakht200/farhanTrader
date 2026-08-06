@@ -1,0 +1,436 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Branch;
+use App\Models\BranchProductStock;
+use App\Models\Category;
+use App\Models\Customer;
+use App\Models\Expense;
+use App\Models\Invoice;
+use App\Models\Order;
+use App\Models\Product;
+use App\Models\ProductUnit;
+use App\Models\Sale;
+use App\Models\SaleItem;
+use App\Models\Supplier;
+use App\Models\Unit;
+use App\Models\UnitConversion;
+use App\Models\User;
+use App\Support\CurrentBranch;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
+
+class SyncController extends Controller
+{
+    public function ping()
+    {
+        return response()->json([
+            'ok' => true,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
+    public function enrollVault(Request $request)
+    {
+        $request->validate([
+            'password' => ['required', 'string'],
+        ]);
+
+        /** @var User $user */
+        $user = $request->user();
+
+        if (! Hash::check($request->input('password'), $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['Password does not match the signed-in account.'],
+            ]);
+        }
+
+        return response()->json([
+            'password_hash' => $user->password,
+            'user' => $this->userPayload($user),
+        ]);
+    }
+
+    public function bootstrap(Request $request)
+    {
+        $user = $request->user();
+        $branchId = CurrentBranch::id($user);
+
+        return response()->json($this->fullSnapshot($user, $branchId));
+    }
+
+    public function pull(Request $request)
+    {
+        $user = $request->user();
+        $branchId = CurrentBranch::id($user);
+        $since = $request->query('since');
+
+        // Simple strategy: if since is missing/stale, return full snapshot.
+        $sinceAt = null;
+        try {
+            $sinceAt = $since ? \Carbon\Carbon::parse($since) : null;
+        } catch (\Throwable) {
+            $sinceAt = null;
+        }
+
+        if (! $sinceAt || now()->diffInHours($sinceAt) > 24) {
+            $payload = $this->fullSnapshot($user, $branchId);
+            $payload['full'] = true;
+
+            return response()->json($payload);
+        }
+
+        $payload = [
+            'full' => false,
+            'server_time' => now()->toIso8601String(),
+            'active_branch_id' => $branchId,
+            'cache_version' => 1,
+            'user' => $this->userPayload($user),
+            'products' => $this->productsForBranch($branchId, $sinceAt),
+            'categories' => Category::query()->where('updated_at', '>', $sinceAt)->get(),
+            'units' => Unit::query()->where('updated_at', '>', $sinceAt)->get(),
+            'customers' => Customer::query()->where('updated_at', '>', $sinceAt)->get(),
+            'suppliers' => Supplier::query()->where('updated_at', '>', $sinceAt)->get(),
+            'sales' => Sale::query()->where('updated_at', '>', $sinceAt)->limit(500)->get(),
+            'sale_items' => SaleItem::query()
+                ->whereIn('sale_id', Sale::query()->where('updated_at', '>', $sinceAt)->limit(500)->pluck('id'))
+                ->get(),
+            'orders' => Order::query()->where('updated_at', '>', $sinceAt)->limit(500)->get(),
+            'expenses' => Expense::query()->where('updated_at', '>', $sinceAt)->limit(500)->get(),
+            'invoices' => Invoice::query()->where('updated_at', '>', $sinceAt)->limit(500)->get(),
+            'branches' => $user->isAdmin()
+                ? Branch::query()->orderBy('name')->get()
+                : Branch::query()->where('id', $branchId)->get(),
+            'product_units' => ProductUnit::query()->where('updated_at', '>', $sinceAt)->get(),
+            'unit_conversions' => UnitConversion::query()->where('updated_at', '>', $sinceAt)->get(),
+            'branch_stocks' => BranchProductStock::query()
+                ->where('branch_id', $branchId)
+                ->where('updated_at', '>', $sinceAt)
+                ->get()
+                ->map(fn ($row) => [
+                    'branch_id' => $row->branch_id,
+                    'product_id' => $row->product_id,
+                    'quantity' => $row->quantity,
+                    'updated_at' => $row->updated_at,
+                ]),
+            'deleted' => new \stdClass(),
+        ];
+
+        return response()->json($payload);
+    }
+
+    public function push(Request $request)
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.client_uuid' => ['required', 'uuid'],
+            'items.*.entity' => ['required', 'string'],
+            'items.*.op' => ['required', 'string'],
+            'items.*.payload' => ['required', 'array'],
+            'items.*.branch_id' => ['nullable', 'integer'],
+            'items.*.created_at' => ['nullable', 'string'],
+        ]);
+
+        $results = [];
+
+        foreach ($validated['items'] as $item) {
+            $results[] = $this->applyPushItem($user, $item);
+        }
+
+        return response()->json([
+            'results' => $results,
+            'server_time' => now()->toIso8601String(),
+        ]);
+    }
+
+    protected function applyPushItem(User $user, array $item): array
+    {
+        $uuid = $item['client_uuid'];
+
+        if (Schema::hasTable('sync_id_mappings')) {
+            $existing = DB::table('sync_id_mappings')->where('client_uuid', $uuid)->first();
+            if ($existing) {
+                $meta = is_string($existing->meta)
+                    ? (json_decode($existing->meta, true) ?: [])
+                    : (array) ($existing->meta ?? []);
+
+                return [
+                    'client_uuid' => $uuid,
+                    'entity' => $item['entity'],
+                    'status' => 'ok',
+                    'server_id' => $existing->server_id,
+                    'sale_number' => $meta['sale_number'] ?? null,
+                ];
+            }
+        }
+
+        try {
+            return DB::transaction(function () use ($user, $item, $uuid) {
+                return match ($item['entity']) {
+                    'customer' => $this->pushCustomer($user, $item, $uuid),
+                    'expense' => $this->pushExpense($user, $item, $uuid),
+                    'sale' => $this->pushSale($user, $item, $uuid),
+                    default => [
+                        'client_uuid' => $uuid,
+                        'entity' => $item['entity'],
+                        'status' => 'conflict',
+                        'message' => 'Unsupported entity for offline sync: '.$item['entity'],
+                    ],
+                };
+            });
+        } catch (\Throwable $e) {
+            return [
+                'client_uuid' => $uuid,
+                'entity' => $item['entity'],
+                'status' => 'conflict',
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    protected function pushCustomer(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $customer = Customer::create([
+            'name' => $payload['name'] ?? 'Customer',
+            'phone' => $payload['phone'] ?? null,
+            'email' => $payload['email'] ?? null,
+            'address' => $payload['address'] ?? null,
+            'customer_type' => $payload['customer_type'] ?? 'retail',
+            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'is_active' => true,
+        ]);
+
+        $this->mapUuid($uuid, 'customer', $customer->id);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'customer',
+            'status' => 'ok',
+            'server_id' => $customer->id,
+        ];
+    }
+
+    protected function pushExpense(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $expense = Expense::create([
+            'name' => $payload['name'] ?? $payload['title'] ?? 'Expense',
+            'amount' => $payload['amount'] ?? 0,
+            'category' => $payload['category'] ?? null,
+            'description' => $payload['description'] ?? $payload['notes'] ?? null,
+            'expense_date' => $payload['expense_date'] ?? now()->toDateString(),
+            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'user_id' => $user->id,
+        ]);
+
+        $this->mapUuid($uuid, 'expense', $expense->id);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'expense',
+            'status' => 'ok',
+            'server_id' => $expense->id,
+        ];
+    }
+
+    protected function pushSale(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $items = $payload['items'] ?? [];
+
+        if (! is_array($items) || count($items) < 1) {
+            throw new \RuntimeException('Sale requires items.');
+        }
+
+        $subtotal = 0;
+        $totalDiscount = 0;
+
+        foreach ($items as $line) {
+            $lineTotal = round(((float) ($line['quantity'] ?? 0)) * ((float) ($line['selling_price'] ?? 0)), 2);
+            $discount = 0;
+            if (! empty($line['discount']) && (float) $line['discount'] > 0) {
+                if (($line['discount_type'] ?? '') === 'percentage') {
+                    $discount = round($lineTotal * ((float) $line['discount'] / 100), 2);
+                } else {
+                    $discount = round((float) $line['discount'], 2);
+                }
+                $lineTotal = round($lineTotal - $discount, 2);
+            }
+            $totalDiscount += $discount;
+            $subtotal += $lineTotal;
+
+            $isCustom = isset($line['is_custom']) && ($line['is_custom'] == '1' || $line['is_custom'] === true);
+            if (! $isCustom && ! empty($line['product_id'])) {
+                $product = Product::find($line['product_id']);
+                if (! $product) {
+                    throw new \RuntimeException('Product not found: '.$line['product_id']);
+                }
+                $qty = (float) ($line['quantity'] ?? 0);
+                if ($qty > (float) ($product->stock_quantity ?? 0) + 0.000001) {
+                    throw new \RuntimeException("Insufficient stock for {$product->name}");
+                }
+            }
+        }
+
+        $totalAmount = round($subtotal, 2);
+        $paidAmount = min((float) ($payload['paid_amount'] ?? $totalAmount), $totalAmount);
+        $paymentStatus = 'paid';
+        if ($paidAmount <= 0) {
+            $paymentStatus = 'pending';
+        } elseif ($paidAmount < $totalAmount) {
+            $paymentStatus = 'partial';
+        }
+
+        $customerName = trim((string) ($payload['customer_name'] ?? 'Walk-in Customer')) ?: 'Walk-in Customer';
+        $saleNumber = Sale::generateSaleNumber('SALE');
+
+        $sale = Sale::create([
+            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'sale_number' => $saleNumber,
+            'customer_id' => $payload['customer_id'] ?? null,
+            'user_id' => $user->id,
+            'sale_date' => now()->toDateString(),
+            'subtotal' => $subtotal,
+            'tax_amount' => 0,
+            'discount_amount' => $totalDiscount,
+            'total_amount' => $totalAmount,
+            'paid_amount' => $paidAmount,
+            'payment_status' => $paymentStatus,
+            'status' => 'completed',
+            'notes' => $payload['comment'] ?? "Customer: {$customerName}",
+        ]);
+
+        foreach ($items as $line) {
+            $isCustom = isset($line['is_custom']) && ($line['is_custom'] == '1' || $line['is_custom'] === true);
+            $qty = (float) ($line['quantity'] ?? 0);
+            $price = (float) ($line['selling_price'] ?? 0);
+            $lineTotal = round($qty * $price, 2);
+
+            $productName = $isCustom
+                ? ($line['product_name'] ?? 'Custom Product')
+                : (Product::find($line['product_id'] ?? null)?->name);
+
+            SaleItem::create([
+                'sale_id' => $sale->id,
+                'product_id' => $isCustom ? null : ($line['product_id'] ?? null),
+                'product_name' => $productName,
+                'quantity' => $qty,
+                'quantity_in_base_unit' => $qty,
+                'unit_id' => $line['unit_id'] ?? null,
+                'unit_price' => $price,
+                'discount' => $line['discount'] ?? 0,
+                'total' => $lineTotal,
+            ]);
+
+            if (! $isCustom && ! empty($line['product_id'])) {
+                $product = Product::find($line['product_id']);
+                if ($product && method_exists($product, 'decrementStock')) {
+                    $product->decrementStock($qty);
+                } elseif ($product) {
+                    $product->decrement('stock_quantity', $qty);
+                }
+            }
+        }
+
+        $this->mapUuid($uuid, 'sale', $sale->id, ['sale_number' => $saleNumber]);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'sale',
+            'status' => 'ok',
+            'server_id' => $sale->id,
+            'sale_number' => $saleNumber,
+        ];
+    }
+
+    protected function mapUuid(string $uuid, string $entity, $serverId, array $meta = []): void
+    {
+        if (! Schema::hasTable('sync_id_mappings')) {
+            return;
+        }
+
+        DB::table('sync_id_mappings')->insert([
+            'client_uuid' => $uuid,
+            'entity' => $entity,
+            'server_id' => (string) $serverId,
+            'meta' => json_encode($meta),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    protected function fullSnapshot(User $user, ?int $branchId): array
+    {
+        $sales = Sale::query()->orderByDesc('id')->limit(300)->get();
+        $saleIds = $sales->pluck('id');
+
+        return [
+            'full' => true,
+            'server_time' => now()->toIso8601String(),
+            'active_branch_id' => $branchId,
+            'cache_version' => 1,
+            'user' => $this->userPayload($user),
+            'products' => $this->productsForBranch($branchId),
+            'categories' => Category::query()->orderBy('name')->get(),
+            'units' => Unit::query()->orderBy('name')->get(),
+            'customers' => Customer::query()->orderBy('name')->limit(2000)->get(),
+            'suppliers' => Supplier::query()->orderBy('name')->limit(2000)->get(),
+            'sales' => $sales,
+            'sale_items' => SaleItem::query()->whereIn('sale_id', $saleIds)->get(),
+            'orders' => Order::query()->orderByDesc('id')->limit(300)->get(),
+            'expenses' => Expense::query()->orderByDesc('id')->limit(300)->get(),
+            'invoices' => Invoice::query()->orderByDesc('id')->limit(300)->get(),
+            'branches' => $user->isAdmin()
+                ? Branch::query()->orderBy('name')->get()
+                : Branch::query()->where('id', $branchId)->get(),
+            'product_units' => ProductUnit::query()->get(),
+            'unit_conversions' => UnitConversion::query()->get(),
+            'branch_stocks' => BranchProductStock::query()
+                ->where('branch_id', $branchId)
+                ->get()
+                ->map(fn ($row) => [
+                    'branch_id' => $row->branch_id,
+                    'product_id' => $row->product_id,
+                    'quantity' => $row->quantity,
+                    'updated_at' => $row->updated_at,
+                ]),
+        ];
+    }
+
+    protected function productsForBranch(?int $branchId, $sinceAt = null)
+    {
+        $query = Product::query()->with(['currentBranchStock', 'unit', 'baseUnit']);
+        if ($sinceAt) {
+            $query->where('updated_at', '>', $sinceAt);
+        }
+
+        return $query->orderBy('name')->limit(5000)->get()->map(function (Product $product) {
+            $branchStock = $product->currentBranchStock;
+
+            return array_merge($product->toArray(), [
+                'stock_quantity' => (float) ($branchStock?->stock_quantity ?? $product->stock_quantity),
+                'selling_type' => $branchStock?->selling_type
+                    ?: ($product->getAttributes()['selling_type'] ?? 'retail'),
+            ]);
+        });
+    }
+
+    protected function userPayload(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+            'branch_id' => $user->branch_id,
+            'is_admin' => $user->isAdmin(),
+            'active_branch_id' => CurrentBranch::id($user),
+        ];
+    }
+}

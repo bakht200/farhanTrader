@@ -9,6 +9,12 @@
         <p class="text-gray-600">Access the Farhan Traders panel using your email and passcode.</p>
     </div>
 
+    <div id="ftpos-offline-gate" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p class="font-semibold mb-1">Offline access not set up</p>
+        <p data-gate-detail>This device has never signed in while online. Connect to the internet and log in once. After that, you can use the full system offline.</p>
+        <button type="button" class="mt-2 text-orange-700 underline" onclick="window.FTOffline?.checkNow?.().then((ok)=> ok && window.location.reload())">Retry connection</button>
+    </div>
+
     <form method="POST" action="{{ route('login') }}">
         @csrf
 

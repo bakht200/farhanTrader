@@ -716,7 +716,12 @@ class SupplierController extends Controller
                             'is_active' => true,
                             'user_id' => auth()->id(),
                         ]);
-                        app(\App\Services\BranchStockService::class)->initializeProduct($product, (float) $quantity);
+                        app(\App\Services\BranchStockService::class)->initializeProduct(
+                            $product,
+                            (float) $quantity,
+                            null,
+                            $sellingType
+                        );
                         $productId = $product->id;
                         
                         // Create ProductUnit for the base unit

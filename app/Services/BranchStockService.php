@@ -33,13 +33,74 @@ class BranchStockService
         $productId = $product instanceof Product ? $product->id : $product;
         $branchId = $this->branchId($branchId);
 
+        $existing = BranchProductStock::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->first();
+
+        $payload = [
+            'stock_quantity' => max(0, $quantity),
+        ];
+
+        // Preserve selling_type on stock-only updates; seed from product if new row
+        if (! $existing) {
+            $defaultType = $product instanceof Product
+                ? ($product->getAttributes()['selling_type'] ?? 'both')
+                : (Product::query()->where('id', $productId)->value('selling_type') ?? 'both');
+            $payload['selling_type'] = $defaultType ?: 'both';
+        }
+
+        return BranchProductStock::query()->updateOrCreate(
+            [
+                'branch_id' => $branchId,
+                'product_id' => $productId,
+            ],
+            $payload
+        );
+    }
+
+    public function getSellingType(Product|int $product, ?int $branchId = null): string
+    {
+        $productId = $product instanceof Product ? $product->id : $product;
+        $branchId = $this->branchId($branchId);
+
+        $type = BranchProductStock::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->value('selling_type');
+
+        if ($type) {
+            return $type;
+        }
+
+        if ($product instanceof Product) {
+            return $product->getAttributes()['selling_type'] ?? 'retail';
+        }
+
+        return Product::query()->where('id', $productId)->value('selling_type') ?? 'retail';
+    }
+
+    public function setSellingType(Product|int $product, string $sellingType, ?int $branchId = null): BranchProductStock
+    {
+        $productId = $product instanceof Product ? $product->id : $product;
+        $branchId = $this->branchId($branchId);
+        $sellingType = in_array($sellingType, ['retail', 'wholesale', 'both'], true)
+            ? $sellingType
+            : 'both';
+
+        $existing = BranchProductStock::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->first();
+
         return BranchProductStock::query()->updateOrCreate(
             [
                 'branch_id' => $branchId,
                 'product_id' => $productId,
             ],
             [
-                'stock_quantity' => max(0, $quantity),
+                'stock_quantity' => $existing ? (float) $existing->stock_quantity : 0,
+                'selling_type' => $sellingType,
             ]
         );
     }
@@ -59,7 +120,11 @@ class BranchStockService
         $productId = $product instanceof Product ? $product->id : $product;
         $branchId = $this->branchId($branchId);
 
-        return DB::transaction(function () use ($productId, $branchId, $delta) {
+        return DB::transaction(function () use ($product, $productId, $branchId, $delta) {
+            $defaultType = $product instanceof Product
+                ? ($product->getAttributes()['selling_type'] ?? 'both')
+                : (Product::query()->where('id', $productId)->value('selling_type') ?? 'both');
+
             $stock = BranchProductStock::query()->firstOrCreate(
                 [
                     'branch_id' => $branchId,
@@ -67,6 +132,7 @@ class BranchStockService
                 ],
                 [
                     'stock_quantity' => 0,
+                    'selling_type' => $defaultType ?: 'both',
                 ]
             );
 
@@ -85,18 +151,27 @@ class BranchStockService
     /**
      * Create stock rows for a product across all branches.
      * Current branch gets $initialQuantity; others get 0.
+     * All branches get the same initial selling_type (editable later per branch).
      */
-    public function initializeProduct(Product|int $product, float $initialQuantity = 0, ?int $currentBranchId = null): void
+    public function initializeProduct(Product|int $product, float $initialQuantity = 0, ?int $currentBranchId = null, ?string $sellingType = null): void
     {
         $productId = $product instanceof Product ? $product->id : $product;
         $currentBranchId = $this->branchId($currentBranchId);
         $now = now();
 
-        $rows = Branch::query()->pluck('id')->map(function ($branchId) use ($productId, $currentBranchId, $initialQuantity, $now) {
+        if ($sellingType === null) {
+            $sellingType = $product instanceof Product
+                ? ($product->getAttributes()['selling_type'] ?? 'both')
+                : (Product::query()->where('id', $productId)->value('selling_type') ?? 'both');
+        }
+        $sellingType = $sellingType ?: 'both';
+
+        $rows = Branch::query()->pluck('id')->map(function ($branchId) use ($productId, $currentBranchId, $initialQuantity, $sellingType, $now) {
             return [
                 'branch_id' => $branchId,
                 'product_id' => $productId,
                 'stock_quantity' => (int) $branchId === (int) $currentBranchId ? max(0, $initialQuantity) : 0,
+                'selling_type' => $sellingType,
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
@@ -106,7 +181,7 @@ class BranchStockService
             BranchProductStock::query()->upsert(
                 $rows,
                 ['branch_id', 'product_id'],
-                ['stock_quantity', 'updated_at']
+                ['stock_quantity', 'selling_type', 'updated_at']
             );
         }
     }
@@ -118,14 +193,15 @@ class BranchStockService
     {
         $branchId = $branch instanceof Branch ? $branch->id : $branch;
         $now = now();
-        $productIds = Product::query()->pluck('id');
+        $products = Product::query()->get(['id', 'selling_type']);
 
         $rows = [];
-        foreach ($productIds as $productId) {
+        foreach ($products as $product) {
             $rows[] = [
                 'branch_id' => $branchId,
-                'product_id' => $productId,
+                'product_id' => $product->id,
                 'stock_quantity' => 0,
+                'selling_type' => $product->getAttributes()['selling_type'] ?? 'both',
                 'created_at' => $now,
                 'updated_at' => $now,
             ];

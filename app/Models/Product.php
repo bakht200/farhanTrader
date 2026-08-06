@@ -98,6 +98,37 @@ class Product extends Model
         return app(BranchStockService::class)->get($this);
     }
 
+    /**
+     * Branch-aware selling type (retail / wholesale / both) for the active branch.
+     * Falls back to products.selling_type when no branch row is set.
+     */
+    public function getSellingTypeAttribute($value): string
+    {
+        if (!$this->exists) {
+            return $value ?: 'retail';
+        }
+
+        if ($this->relationLoaded('currentBranchStock')) {
+            $branchType = $this->currentBranchStock?->selling_type;
+            if ($branchType) {
+                return $branchType;
+            }
+        } else {
+            $branchType = app(BranchStockService::class)->getSellingType($this);
+            if ($branchType) {
+                return $branchType;
+            }
+        }
+
+        return $value ?: 'retail';
+    }
+
+    public function setBranchSellingType(string $sellingType, ?int $branchId = null): void
+    {
+        app(BranchStockService::class)->setSellingType($this, $sellingType, $branchId);
+        $this->unsetRelation('currentBranchStock');
+    }
+
     public function currentStock(?int $branchId = null): float
     {
         return app(BranchStockService::class)->get($this, $branchId);

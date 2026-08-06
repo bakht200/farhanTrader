@@ -37,6 +37,14 @@
             <div class="bg-green-500 rounded-full px-4 py-1 text-sm font-medium" id="current-time">
                 {{ now()->format('H:i') }}
             </div>
+            <!-- Offline / online status (POS has no app-layout badge) -->
+            <button type="button"
+                id="pos-connectivity-status"
+                class="rounded-full px-4 py-1 text-sm font-semibold whitespace-nowrap border-2 border-white/20 bg-green-600 text-white"
+                title="Connection status">
+                Online
+            </button>
+            <span id="pos-pending-sync" class="hidden rounded-full px-3 py-1 text-xs font-semibold bg-amber-400 text-gray-900"></span>
         </div>
         <div class="flex items-center space-x-3">
                     <a href="{{ route('orders.index') }}" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-md text-sm font-medium text-white whitespace-nowrap">View Orders</a>
@@ -1719,7 +1727,7 @@
                 formData.append(`items[${index}][discount]`, item.discount);
             });
 
-            fetch('{{ route("sales.pos.process") }}', {
+            const placeOrderOnline = () => fetch('{{ route("sales.pos.process") }}', {
                 method: 'POST',
                 headers: {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
@@ -1727,8 +1735,41 @@
                     'X-Requested-With': 'XMLHttpRequest'
                 },
                 body: formData
-            })
-            .then(async response => {
+            });
+
+            const runPlaceOrder = async () => {
+                const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+                if (offline && window.FTOffline.queueOfflineSale) {
+                    const payload = {
+                        customer_id: formData.get('customer_id') || null,
+                        customer_name: formData.get('customer_name') || 'Walk-in Customer',
+                        payment_method: formData.get('payment_method') || 'cash',
+                        paid_amount: formData.get('paid_amount'),
+                        comment: formData.get('comment'),
+                        items: cart.map((item) => {
+                            const isCustom = item.product_id === null || item.is_custom === true;
+                            return {
+                                product_id: isCustom ? null : item.product_id,
+                                product_name: isCustom ? item.name : undefined,
+                                is_custom: isCustom ? '1' : '0',
+                                quantity: item.quantity,
+                                unit_id: item.unit_id || null,
+                                selling_price: item.selling_price,
+                                discount_type: item.discount_type,
+                                discount: item.discount,
+                            };
+                        }),
+                    };
+                    const result = await window.FTOffline.queueOfflineSale(payload);
+                    return {
+                        success: true,
+                        offline: true,
+                        client_uuid: result.clientUuid,
+                        message: 'Saved locally — will sync when online',
+                        sale_id: result.localSale.id,
+                    };
+                }
+                return placeOrderOnline().then(async response => {
                 const contentType = response.headers.get('content-type');
                 let data;
                 
@@ -1752,9 +1793,46 @@
                 }
                 
                 return data;
-            })
+            });
+            };
+
+            runPlaceOrder()
             .then(data => {
                 if (data.success) {
+                    if (data.offline) {
+                        const cartTotal = typeof calculateTotal === 'function' ? calculateTotal() : 0;
+                        const previousBalance = typeof customerPreviousBalance !== 'undefined' ? (customerPreviousBalance ?? 0) : 0;
+                        const paidAmountForReceipt = parseFloat(paidAmount != null ? paidAmount : cartTotal) || 0;
+                        const grandTotal = cartTotal + previousBalance;
+                        const balance = Math.max(0, grandTotal - paidAmountForReceipt);
+                        const offlineSaleNo = 'SALE-TMP-' + String(data.client_uuid || Date.now()).replace(/\D/g, '').slice(-6).padStart(6, '0');
+
+                        lastOrderData = {
+                            saleNumber: offlineSaleNo,
+                            customerName: customerName || 'Walk-in Customer',
+                            paymentMethod: paymentMethod || 'cash',
+                            comment: orderComment || '',
+                            items: JSON.parse(JSON.stringify(cart)),
+                            cartTotal: cartTotal,
+                            grandTotal: grandTotal,
+                            paidAmount: paidAmountForReceipt,
+                            balance: balance,
+                            previousBalance: previousBalance,
+                            previousBalancePayment: 0,
+                            orderDate: typeof formatDateTime === 'function' ? formatDateTime(new Date().toISOString()) : new Date().toLocaleString(),
+                        };
+
+                        if (typeof closePaymentModal === 'function') closePaymentModal();
+                        showBillPopup(offlineSaleNo);
+                        orderId = 0;
+                        if (typeof clearCart === 'function') {
+                            clearCart();
+                        } else {
+                            cart = [];
+                            if (typeof updateCartDisplay === 'function') updateCartDisplay();
+                        }
+                        return;
+                    }
                     // If editing, fetch updated order data and show bill
                     if (data.is_edit) {
                         // Fetch the updated sale/order data - try sales route first, then orders

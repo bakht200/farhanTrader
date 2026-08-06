@@ -34,11 +34,12 @@
                     </a>
                 </li>
                 <li>
-                    <a href="{{ route('health-check.index') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('health-check.*') ? 'bg-gray-100 font-medium' : '' }}">
+                    <a href="{{ route('health-check.index') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('health-check.*') ? 'bg-gray-100 font-medium' : '' }}">
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m-8 5h10a2 2 0 002-2V7a2 2 0 00-2-2h-3l-1-2H9L8 5H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                         </svg>
-                        Health Check
+                        <span class="flex-1">Health Check</span>
+                        <x-online-only-lock />
                     </a>
                 </li>
                 @if(Auth::user()?->isAdmin())
@@ -180,48 +181,60 @@
             </ul>
         </div>
 
-        <!-- AI Insights -->
+        <!-- AI Insights (online only) -->
         <div class="mb-6">
-            <h3 class="text-sm font-bold text-blue-600 uppercase mb-3">AI Insights</h3>
+            <h3 class="text-sm font-bold text-blue-600 uppercase mb-3 flex items-center gap-1.5">
+                AI Insights
+                <span class="ftpos-online-only-badge hidden inline-flex text-red-500" title="Requires internet connection">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5 12.859a10 10 0 0114 0M1.889 8.314a15 15 0 0120.222 0M3 3l18 18" />
+                    </svg>
+                </span>
+            </h3>
                 <ul class="space-y-1">
                     <li>
-                        <a href="{{ route('ai-insights.index') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.index') ? 'bg-gray-100 font-medium' : '' }}">
+                        <a href="{{ route('ai-insights.index') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.index') ? 'bg-gray-100 font-medium' : '' }}">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                             </svg>
-                            AI Dashboard
+                            <span class="flex-1">AI Dashboard</span>
+                            <x-online-only-lock />
                         </a>
                     </li>
                     <li>
-                        <a href="{{ route('ai-insights.forecast') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.forecast') ? 'bg-gray-100 font-medium' : '' }}">
+                        <a href="{{ route('ai-insights.forecast') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.forecast') ? 'bg-gray-100 font-medium' : '' }}">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
                             </svg>
-                            Sales Forecast
+                            <span class="flex-1">Sales Forecast</span>
+                            <x-online-only-lock />
                         </a>
                     </li>
                     <li>
-                        <a href="{{ route('ai-insights.inventory') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.inventory') ? 'bg-gray-100 font-medium' : '' }}">
+                        <a href="{{ route('ai-insights.inventory') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.inventory') ? 'bg-gray-100 font-medium' : '' }}">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-6m4 6V7m4 10V4M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2h-2M5 19a2 2 0 01-2-2V7a2 2 0 012-2h2m0 0V3m0 2h8"></path>
                             </svg>
-                            ABC Analysis
+                            <span class="flex-1">ABC Analysis</span>
+                            <x-online-only-lock />
                         </a>
                     </li>
                     <li>
-                        <a href="{{ route('ai-insights.customers') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.customers') ? 'bg-gray-100 font-medium' : '' }}">
+                        <a href="{{ route('ai-insights.customers') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.customers') ? 'bg-gray-100 font-medium' : '' }}">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5V9a2 2 0 00-2-2h-3m-4 13H6a2 2 0 01-2-2v-3m0 0V9a2 2 0 012-2h3m0 0V4a2 2 0 012-2h2a2 2 0 012 2v3m-6 0h6"></path>
                             </svg>
-                            Customer Segments
+                            <span class="flex-1">Customer Segments</span>
+                            <x-online-only-lock />
                         </a>
                     </li>
                     <li>
-                        <a href="{{ route('ai-insights.recommendations') }}" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.recommendations') ? 'bg-gray-100 font-medium' : '' }}">
+                        <a href="{{ route('ai-insights.recommendations') }}" title="Requires internet connection" data-requires-internet="1" class="flex items-center px-3 py-2 text-gray-700 rounded-md hover:bg-gray-100 {{ request()->routeIs('ai-insights.recommendations') ? 'bg-gray-100 font-medium' : '' }}">
                             <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
                             </svg>
-                            Recommendations
+                            <span class="flex-1">Recommendations</span>
+                            <x-online-only-lock />
                         </a>
                     </li>
                     {{-- <li>
