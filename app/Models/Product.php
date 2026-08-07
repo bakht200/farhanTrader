@@ -320,4 +320,82 @@ class Product extends Model
             return $quantity;
         }
     }
+
+    /**
+     * Branch-resolved base selling price for POS (respects retail / wholesale / both).
+     */
+    public function branchPosBasePrice(): float
+    {
+        $sellingType = $this->selling_type ?: 'retail';
+
+        if ($sellingType === 'wholesale' && $this->wholesale_price !== null && $this->wholesale_price !== '') {
+            return round((float) $this->wholesale_price, 2);
+        }
+
+        if (in_array($sellingType, ['retail', 'both'], true)
+            && $this->retail_price !== null
+            && $this->retail_price !== '') {
+            return round((float) $this->retail_price, 2);
+        }
+
+        return round((float) ($this->selling_price ?? 0), 2);
+    }
+
+    /**
+     * Selling units for POS with branch price overrides applied.
+     * Base unit uses this branch's rate; other units are scaled from the shared unit prices.
+     *
+     * @return array<int, array{unit_id: mixed, unit_name: string, unit_short_name: string, is_base_unit: bool, selling_price: float}>
+     */
+    public function sellingUnitsForPos(): array
+    {
+        $branchBase = $this->branchPosBasePrice();
+
+        $units = $this->relationLoaded('productUnits')
+            ? $this->productUnits->filter(fn ($pu) => (bool) ($pu->is_active ?? true))->values()
+            : $this->productUnits()->active()->with('unit')->get();
+
+        if ($units->isEmpty()) {
+            $unit = $this->relationLoaded('unit') ? $this->unit : $this->unit()->first();
+            if (! $unit) {
+                return [];
+            }
+
+            return [[
+                'unit_id' => $this->unit_id,
+                'unit_name' => $unit->short_name ?? $unit->name ?? '',
+                'unit_short_name' => $unit->short_name ?? '',
+                'is_base_unit' => true,
+                'selling_price' => $branchBase,
+            ]];
+        }
+
+        if (! $units->first()?->relationLoaded('unit')) {
+            $units->load('unit');
+        }
+
+        $basePu = $units->firstWhere('is_base_unit', true) ?? $units->first();
+        $masterBaseUnitPrice = (float) ($basePu?->selling_price ?? 0);
+        if ($masterBaseUnitPrice <= 0) {
+            $attrs = $this->getAttributes();
+            $masterBaseUnitPrice = (float) ($attrs['selling_price'] ?? $attrs['retail_price'] ?? 0);
+        }
+        $ratio = $masterBaseUnitPrice > 0 ? ($branchBase / $masterBaseUnitPrice) : 1.0;
+
+        return $units->map(function ($pu) use ($branchBase, $ratio) {
+            $isBase = (bool) $pu->is_base_unit;
+            $raw = (float) ($pu->selling_price ?? 0);
+            $price = $isBase
+                ? $branchBase
+                : ($raw > 0 ? round($raw * $ratio, 2) : 0.0);
+
+            return [
+                'unit_id' => $pu->unit_id,
+                'unit_name' => $pu->unit->short_name ?? $pu->unit->name ?? '',
+                'unit_short_name' => $pu->unit->short_name ?? '',
+                'is_base_unit' => $isBase,
+                'selling_price' => $price,
+            ];
+        })->values()->all();
+    }
 }

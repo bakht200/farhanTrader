@@ -21,9 +21,19 @@ class Supplier extends Model
 
         static::creating(function ($supplier) {
             if (empty($supplier->supplier_id)) {
-                $lastSupplier = Supplier::orderBy('id', 'desc')->first();
-                $nextId = $lastSupplier ? $lastSupplier->id + 1 : 1;
-                $supplier->supplier_id = 'SN-' . str_pad($nextId, 3, '0', STR_PAD_LEFT);
+                // supplier_id is globally unique — ignore branch scope (same class of bug as sale numbers)
+                $codes = self::withoutGlobalScopes()
+                    ->where('supplier_id', 'like', 'SN-%')
+                    ->pluck('supplier_id');
+
+                $maxNumber = 0;
+                foreach ($codes as $code) {
+                    if (preg_match('/^SN-(\d+)$/', (string) $code, $m)) {
+                        $maxNumber = max($maxNumber, (int) $m[1]);
+                    }
+                }
+
+                $supplier->supplier_id = 'SN-'.str_pad((string) ($maxNumber + 1), 3, '0', STR_PAD_LEFT);
             }
         });
     }

@@ -269,12 +269,139 @@
             searchTimeout = setTimeout(function() {
                 const form = document.getElementById('search-form');
                 if (form) {
+                    // Offline: filter local table instead of submitting to server
+                    const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+                    if (offline) {
+                        hydrateSuppliersFromOffline();
+                        return;
+                    }
                     form.submit();
                 }
             }, 500); // Wait 500ms after user stops typing
         }
+
+        function escapeHtml(str) {
+            return String(str ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function formatMoney(n) {
+            const v = Number(n) || 0;
+            return 'PKR ' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        async function hydrateSuppliersFromOffline() {
+            if (!window.FTOffline?.db?.suppliers) {
+                return;
+            }
+
+            const tbody = document.querySelector('table.min-w-full tbody');
+            if (!tbody) {
+                return;
+            }
+
+            const search = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+            const branchMeta = await window.FTOffline.db.meta.get('active_branch_id');
+            const branchId = branchMeta?.value != null ? Number(branchMeta.value) : null;
+
+            let rows = await window.FTOffline.db.suppliers.toArray();
+            if (branchId) {
+                rows = rows.filter((s) => !s.branch_id || Number(s.branch_id) === branchId);
+            }
+            if (search) {
+                rows = rows.filter((s) => {
+                    const hay = `${s.name || ''} ${s.supplier_id || ''} ${s.email || ''} ${s.phone || ''} ${s.company_name || ''}`.toLowerCase();
+                    return hay.includes(search);
+                });
+            }
+
+            rows.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+            if (!rows.length) {
+                tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-4 text-center text-gray-500">No suppliers found offline. Sync once while online.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = rows.map((s) => {
+                const idLabel = escapeHtml(s.supplier_id || (typeof s.id === 'number' ? ('SN-' + String(s.id).padStart(3, '0')) : 'Pending sync'));
+                const paid = Number(s.total_paid || 0);
+                const remaining = Number(s.remaining || 0);
+                const unpaid = remaining > 0 || !!s.hasUnpaid;
+                const isLocal = String(s.id).startsWith('local-') || s.sync_status === 'pending';
+                const viewHref = isLocal ? '#' : `/suppliers/${s.id}`;
+                const statusBadge = unpaid
+                    ? `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><span class="w-1.5 h-1.5 mr-1.5 bg-red-500 rounded-full"></span>Unpaid</span>`
+                    : `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><span class="w-1.5 h-1.5 mr-1.5 bg-green-500 rounded-full"></span>Paid</span>`;
+
+                return `<tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <input type="checkbox" class="supplier-checkbox rounded border-gray-300 text-orange-600 focus:ring-orange-500" value="${escapeHtml(s.id)}" ${isLocal ? 'disabled' : ''}>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap"><span class="text-sm font-medium text-gray-900">${idLabel}${isLocal ? ' <span class="text-amber-600 text-xs">(offline)</span>' : ''}</span></td>
+                    <td class="px-6 py-4 whitespace-nowrap"><span class="text-sm text-gray-900">${escapeHtml(s.name || '')}</span></td>
+                    <td class="px-6 py-4 whitespace-nowrap"><span class="text-sm font-medium text-green-600">${formatMoney(paid)}</span></td>
+                    <td class="px-6 py-4 whitespace-nowrap"><span class="text-sm font-medium ${remaining > 0 ? 'text-red-600' : 'text-green-600'}">${formatMoney(remaining)}</span></td>
+                    <td class="px-6 py-4 whitespace-nowrap">${statusBadge}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div class="flex items-center space-x-3">
+                            <a href="${viewHref}" class="text-blue-600 hover:text-blue-900 offline-needs-net" title="${isLocal ? 'Sync first' : 'View (needs internet for details)'}">View</a>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            // Totals offline are limited (transactions not cached) — show counts at least
+            const totalEl = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-4 .text-2xl.font-bold.text-gray-900.mt-2');
+            // Update "Total Suppliers" card (4th card)
+            const cards = document.querySelectorAll('.grid.grid-cols-1.md\\:grid-cols-4 > div p.text-2xl');
+            if (cards.length >= 4) {
+                cards[3].textContent = String(rows.length);
+            }
+        }
+
+        async function maybeEnableOfflineSuppliers() {
+            const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+            if (!offline) {
+                return;
+            }
+
+            // Bills/reports need live server data
+            document.querySelectorAll('button[onclick*="printAllSuppliersReport"], button[onclick*="printSupplierReport"]').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    alert('Supplier reports need an internet connection.');
+                }, true);
+            });
+
+            document.addEventListener('click', (e) => {
+                const a = e.target.closest('a.offline-needs-net, a[href*="/suppliers/"]');
+                if (!a) return;
+                const href = a.getAttribute('href') || '';
+                if (href.includes('/create')) return;
+                if (href === '#' || href.includes('/suppliers/')) {
+                    // Detail/edit/delete need server
+                    if (!window.FTOffline.isOnline()) {
+                        e.preventDefault();
+                        alert('Supplier details, bills, and payments need an internet connection. List and create work offline.');
+                    }
+                }
+            }, true);
+
+            await hydrateSuppliersFromOffline();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', maybeEnableOfflineSuppliers);
+        } else {
+            maybeEnableOfflineSuppliers();
+        }
+
         // Select all checkbox functionality
-        document.getElementById('select-all').addEventListener('change', function() {
+        document.getElementById('select-all')?.addEventListener('change', function() {
             const checkboxes = document.querySelectorAll('.supplier-checkbox');
             checkboxes.forEach(checkbox => {
                 checkbox.checked = this.checked;

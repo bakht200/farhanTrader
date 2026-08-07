@@ -53,6 +53,56 @@ async function replaceTable(table, rows) {
     }
 }
 
+/**
+ * Apply branch stock name/price/qty overrides onto cached products.
+ * Ensures Branch 2 rate changes show up offline even when master products row is unchanged.
+ */
+async function applyBranchStockOverridesToProducts(stocks) {
+    if (!stocks?.length) {
+        return;
+    }
+
+    for (const stock of stocks) {
+        const productId = Number(stock.product_id);
+        if (!productId) {
+            continue;
+        }
+        const product = await db.products.get(productId);
+        if (!product) {
+            continue;
+        }
+
+        const patch = {};
+        if (stock.display_name != null && stock.display_name !== '') {
+            patch.name = stock.display_name;
+        }
+        if (stock.purchase_price != null && stock.purchase_price !== '') {
+            patch.purchase_price = stock.purchase_price;
+        }
+        if (stock.selling_price != null && stock.selling_price !== '') {
+            patch.selling_price = stock.selling_price;
+        }
+        if (stock.retail_price != null && stock.retail_price !== '') {
+            patch.retail_price = stock.retail_price;
+        }
+        if (stock.wholesale_price != null && stock.wholesale_price !== '') {
+            patch.wholesale_price = stock.wholesale_price;
+        }
+        if (stock.selling_type) {
+            patch.selling_type = stock.selling_type;
+        }
+        if (stock.stock_quantity != null) {
+            patch.stock_quantity = stock.stock_quantity;
+        } else if (stock.quantity != null) {
+            patch.stock_quantity = stock.quantity;
+        }
+
+        if (Object.keys(patch).length) {
+            await db.products.update(productId, patch);
+        }
+    }
+}
+
 export async function hydrateFromBootstrap(data) {
     await db.transaction(
         'rw',
@@ -86,6 +136,8 @@ export async function hydrateFromBootstrap(data) {
             await replaceTable('productUnits', data.product_units || []);
             await replaceTable('unitConversions', data.unit_conversions || []);
             await replaceTable('branchStocks', data.branch_stocks || []);
+            // products payload is already branch-merged from server; re-apply as safety net
+            await applyBranchStockOverridesToProducts(data.branch_stocks || []);
 
             await setMeta('cache_version', data.cache_version || CACHE_VERSION);
             await setMeta('active_branch_id', data.active_branch_id);
@@ -143,6 +195,8 @@ export async function pull() {
     await merge('productUnits', data.product_units);
     await merge('unitConversions', data.unit_conversions);
     await merge('branchStocks', data.branch_stocks);
+    // Branch-only price edits update branch_stocks; keep products cache in sync
+    await applyBranchStockOverridesToProducts(data.branch_stocks);
 
     if (data.deleted) {
         for (const [table, ids] of Object.entries(data.deleted)) {
@@ -212,6 +266,18 @@ export async function pushOutbox() {
                         await db.customers.put({
                             ...local,
                             id: item.server_id,
+                            sync_status: 'synced',
+                        });
+                    }
+                }
+                if (item.entity === 'supplier' && item.server_id) {
+                    const local = await db.suppliers.where('client_uuid').equals(item.client_uuid).first();
+                    if (local) {
+                        await db.suppliers.delete(local.id);
+                        await db.suppliers.put({
+                            ...local,
+                            id: item.server_id,
+                            supplier_id: item.supplier_id || local.supplier_id,
                             sync_status: 'synced',
                         });
                     }

@@ -108,6 +108,50 @@
             <a href="{{ route('suppliers.index') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-2 rounded-md">Cancel</a>
         </div>
     </form>
+
+    <script>
+        (function () {
+            const form = document.querySelector('form[action*="suppliers"]');
+            if (!form) return;
+
+            form.addEventListener('submit', async function (event) {
+                const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+                if (!offline || !window.FTOffline.queueOfflineSupplier) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                const fd = new FormData(form);
+                const payload = {
+                    name: (fd.get('name') || '').toString().trim(),
+                    supplier_id: (fd.get('supplier_id') || '').toString().trim() || null,
+                    company_name: (fd.get('company_name') || '').toString().trim() || null,
+                    email: (fd.get('email') || '').toString().trim() || null,
+                    phone: (fd.get('phone') || '').toString().trim() || null,
+                    address: (fd.get('address') || '').toString().trim() || null,
+                    city: (fd.get('city') || '').toString().trim() || null,
+                    state: (fd.get('state') || '').toString().trim() || null,
+                    country: (fd.get('country') || '').toString().trim() || null,
+                    postal_code: (fd.get('postal_code') || '').toString().trim() || null,
+                    tax_id: (fd.get('tax_id') || '').toString().trim() || null,
+                };
+
+                if (!payload.name) {
+                    alert('Name is required.');
+                    return;
+                }
+
+                try {
+                    await window.FTOffline.queueOfflineSupplier(payload);
+                    alert('Supplier saved offline. It will sync when you are back online.');
+                    window.location.href = '{{ route('suppliers.index') }}';
+                } catch (e) {
+                    alert(e.message || 'Failed to save supplier offline.');
+                }
+            });
+        })();
+    </script>
 </x-app-layout>
 
 

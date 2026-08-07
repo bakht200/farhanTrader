@@ -9,7 +9,7 @@ import {
     clearLocalSession,
     listVaultEmails,
 } from './authVault';
-import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense } from './outbox';
+import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier } from './outbox';
 import { db, getMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
 import { prefetchAppShells } from './prefetch';
@@ -155,6 +155,7 @@ function exposeApi() {
         queueOfflineSale,
         queueOfflineCustomer,
         queueOfflineExpense,
+        queueOfflineSupplier,
         getLocalSession,
         clearLocalSession,
         unlockOffline,

@@ -179,3 +179,41 @@ export async function queueOfflineExpense(payload) {
     });
     return { clientUuid, local };
 }
+
+export async function queueOfflineSupplier(payload) {
+    const clientUuid = uuid();
+    const now = new Date().toISOString();
+    const branchId = payload.branch_id || (await db.meta.get('active_branch_id'))?.value || null;
+    const local = {
+        id: `local-${clientUuid}`,
+        client_uuid: clientUuid,
+        branch_id: branchId,
+        supplier_id: payload.supplier_id || null,
+        name: payload.name,
+        company_name: payload.company_name || null,
+        email: payload.email || null,
+        phone: payload.phone || null,
+        address: payload.address || null,
+        city: payload.city || null,
+        state: payload.state || null,
+        country: payload.country || null,
+        postal_code: payload.postal_code || null,
+        tax_id: payload.tax_id || null,
+        is_active: true,
+        sync_status: 'pending',
+        total_paid: 0,
+        remaining: 0,
+        hasUnpaid: false,
+        updated_at: now,
+        created_at: now,
+    };
+    await db.suppliers.put(local);
+    await enqueueMutation({
+        entity: 'supplier',
+        op: 'create',
+        payload,
+        branchId,
+        clientUuid,
+    });
+    return { clientUuid, local };
+}

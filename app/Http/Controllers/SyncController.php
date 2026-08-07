@@ -181,6 +181,7 @@ class SyncController extends Controller
                 return match ($item['entity']) {
                     'customer' => $this->pushCustomer($user, $item, $uuid),
                     'expense' => $this->pushExpense($user, $item, $uuid),
+                    'supplier' => $this->pushSupplier($user, $item, $uuid),
                     'sale' => $this->pushSale($user, $item, $uuid),
                     default => [
                         'client_uuid' => $uuid,
@@ -243,6 +244,42 @@ class SyncController extends Controller
             'entity' => 'expense',
             'status' => 'ok',
             'server_id' => $expense->id,
+        ];
+    }
+
+    protected function pushSupplier(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $email = isset($payload['email']) && trim((string) $payload['email']) !== ''
+            ? trim((string) $payload['email'])
+            : null;
+
+        $supplier = Supplier::create([
+            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'supplier_id' => ! empty($payload['supplier_id']) ? $payload['supplier_id'] : null,
+            'name' => $payload['name'] ?? 'Supplier',
+            'company_name' => $payload['company_name'] ?? null,
+            'email' => $email,
+            'phone' => $payload['phone'] ?? null,
+            'address' => $payload['address'] ?? null,
+            'city' => $payload['city'] ?? null,
+            'state' => $payload['state'] ?? null,
+            'country' => $payload['country'] ?? null,
+            'postal_code' => $payload['postal_code'] ?? null,
+            'tax_id' => $payload['tax_id'] ?? null,
+            'is_active' => true,
+        ]);
+
+        $this->mapUuid($uuid, 'supplier', $supplier->id, [
+            'supplier_id' => $supplier->supplier_id,
+        ]);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'supplier',
+            'status' => 'ok',
+            'server_id' => $supplier->id,
+            'supplier_id' => $supplier->supplier_id,
         ];
     }
 
@@ -424,7 +461,18 @@ class SyncController extends Controller
             ->visibleToBranch($branchId)
             ->with(['currentBranchStock', 'unit', 'baseUnit']);
         if ($sinceAt) {
-            $query->where('updated_at', '>', $sinceAt);
+            // Include products whose master row changed OR whose branch overrides/stock changed
+            $changedOverrideIds = BranchProductStock::query()
+                ->where('branch_id', $branchId)
+                ->where('updated_at', '>', $sinceAt)
+                ->pluck('product_id');
+
+            $query->where(function ($q) use ($sinceAt, $changedOverrideIds) {
+                $q->where('updated_at', '>', $sinceAt);
+                if ($changedOverrideIds->isNotEmpty()) {
+                    $q->orWhereIn('id', $changedOverrideIds);
+                }
+            });
         }
 
         return $query->orderBy('name')->limit(5000)->get()->map(function (Product $product) {

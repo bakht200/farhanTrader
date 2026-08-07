@@ -514,6 +514,14 @@ class ProductController extends Controller
     {
         $this->assertProductVisible($product);
 
+        // Branch users only save name/prices/stock — skip units validation entirely
+        if (! $product->writesMasterForCurrentBranch()) {
+            return $this->updateBranchOverrides($request, $product);
+        }
+
+        // Empty "Add Selling Unit" rows must not fail validation
+        $this->scrubIncompleteUnitPayload($request);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:products,slug,' . $product->id,
@@ -541,7 +549,7 @@ class ProductController extends Controller
             'expiry_date' => 'nullable|date|after_or_equal:manufactured_date',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'units' => 'nullable|array',
-            'units.*.unit_id' => 'required_with:units|exists:units,id',
+            'units.*.unit_id' => 'nullable|exists:units,id',
             'units.*.is_base_unit' => 'nullable|boolean',
             'units.*.selling_price' => 'nullable|numeric|min:0',
             'units.*.retail_price' => 'nullable|numeric|min:0',
@@ -615,27 +623,6 @@ class ProductController extends Controller
 
         $branchStockQty = (float) ($validated['stock_quantity'] ?? 0);
         unset($validated['stock_quantity']); // do not write shared legacy column from form
-
-        // Shared product on a non-admin branch: save name/prices/qty for this branch only
-        if (! $product->writesMasterForCurrentBranch()) {
-            try {
-                app(BranchStockService::class)->setOverrides($product, [
-                    'display_name' => $validated['name'],
-                    'purchase_price' => $validated['purchase_price'] ?? null,
-                    'selling_price' => $validated['selling_price'] ?? null,
-                    'retail_price' => $validated['retail_price'] ?? null,
-                    'wholesale_price' => $validated['wholesale_price'] ?? null,
-                    'stock_quantity' => $branchStockQty,
-                    'selling_type' => $validated['selling_type'] ?? 'both',
-                ]);
-                $product->unsetRelation('currentBranchStock');
-
-                return redirect()->route('products.index')
-                    ->with('success', 'Saved for this branch only. Admin catalog product was not changed.');
-            } catch (\Exception $e) {
-                return back()->withErrors(['error' => 'Failed to update branch product: '.$e->getMessage()])->withInput();
-            }
-        }
 
         DB::beginTransaction();
         try {
@@ -1138,7 +1125,7 @@ class ProductController extends Controller
         $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
         $query = Product::where('is_active', true)
             ->visibleToBranch($branchId)
-            ->with('category', 'unit', 'currentBranchStock');
+            ->with('category', 'unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock');
 
         // Search functionality
         if ($request->filled('search')) {
@@ -1154,16 +1141,7 @@ class ProductController extends Controller
             // Get base unit
             $baseUnit = $p->base_unit_id ?? $p->unit_id;
             $baseUnitName = $p->baseUnit ? $p->baseUnit->short_name : ($p->unit ? $p->unit->short_name : '');
-            
-            // Get all selling units with prices
-            $sellingUnits = $p->productUnits()->active()->with('unit')->get()->map(function($pu) {
-                return [
-                    'unit_id' => $pu->unit_id,
-                    'unit_name' => $pu->unit->short_name ?? '',
-                    'is_base_unit' => $pu->is_base_unit,
-                    'selling_price' => $pu->selling_price ?? 0,
-                ];
-            })->toArray();
+            $sellingUnits = $p->sellingUnitsForPos();
             
             return [
                 'id' => $p->id,
@@ -1179,7 +1157,7 @@ class ProductController extends Controller
                 'unit_id' => $baseUnit,
                 'unit_name' => $baseUnitName,
                 'base_unit_id' => $baseUnit,
-                'selling_units' => $sellingUnits, // Array of units with prices
+                'selling_units' => $sellingUnits,
                 'category_id' => $p->category_id,
                 'category_name' => $p->category ? $p->category->name : '',
                 'image' => $p->image ? asset('storage/' . $p->image) : null,
@@ -1194,26 +1172,17 @@ class ProductController extends Controller
      */
     public function getProductUnits(Product $product)
     {
-        $productUnits = $product->productUnits()->active()->with('unit')->get()->map(function($pu) {
+        $product->loadMissing(['currentBranchStock', 'unit', 'productUnits.unit']);
+
+        $productUnits = collect($product->sellingUnitsForPos())->map(function ($pu) {
             return [
-                'unit_id' => $pu->unit_id,
-                'unit_name' => $pu->unit->name ?? '',
-                'unit_short_name' => $pu->unit->short_name ?? '',
-                'is_base_unit' => $pu->is_base_unit,
-                'selling_price' => $pu->selling_price ?? 0,
+                'unit_id' => $pu['unit_id'],
+                'unit_name' => $pu['unit_name'] ?? '',
+                'unit_short_name' => $pu['unit_short_name'] ?? ($pu['unit_name'] ?? ''),
+                'is_base_unit' => $pu['is_base_unit'],
+                'selling_price' => $pu['selling_price'] ?? 0,
             ];
         });
-        
-        // If no ProductUnit records, return default from product
-        if ($productUnits->isEmpty() && $product->unit) {
-            $productUnits = collect([[
-                'unit_id' => $product->unit_id,
-                'unit_name' => $product->unit->name ?? '',
-                'unit_short_name' => $product->unit->short_name ?? '',
-                'is_base_unit' => true,
-                'selling_price' => $product->selling_price ?? 0,
-            ]]);
-        }
         
         return response()->json([
             'success' => true,
@@ -1352,5 +1321,108 @@ class ProductController extends Controller
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * Branch-only product save: name / prices / stock / selling type for this branch.
+     * Ignores units & conversions (admin-owned on shared catalog products).
+     */
+    protected function updateBranchOverrides(Request $request, Product $product)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'selling_type' => 'required|in:retail,wholesale,both',
+            'purchase_price' => 'required|numeric|min:0',
+            'selling_price' => 'nullable|numeric|min:0',
+            'retail_price' => 'nullable|numeric|min:0',
+            'wholesale_price' => 'nullable|numeric|min:0',
+            'stock_quantity' => 'required|numeric|min:0',
+        ]);
+
+        if ($validated['selling_type'] === 'retail') {
+            if (empty($validated['retail_price'])) {
+                return back()->withErrors(['retail_price' => 'Retail price is required when selling type is retail.'])->withInput();
+            }
+            if ($validated['retail_price'] < $validated['purchase_price']) {
+                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
+            }
+            $validated['selling_price'] = $validated['retail_price'];
+        } elseif ($validated['selling_type'] === 'wholesale') {
+            if (empty($validated['wholesale_price'])) {
+                return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is wholesale.'])->withInput();
+            }
+            if ($validated['wholesale_price'] < $validated['purchase_price']) {
+                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
+            }
+            $validated['selling_price'] = $validated['wholesale_price'];
+        } else {
+            if (empty($validated['retail_price'])) {
+                return back()->withErrors(['retail_price' => 'Retail price is required when selling type is both.'])->withInput();
+            }
+            if (empty($validated['wholesale_price'])) {
+                return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is both.'])->withInput();
+            }
+            if ($validated['retail_price'] < $validated['purchase_price']) {
+                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
+            }
+            if ($validated['wholesale_price'] < $validated['purchase_price']) {
+                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
+            }
+            $validated['selling_price'] = $validated['retail_price'];
+        }
+
+        try {
+            app(BranchStockService::class)->setOverrides($product, [
+                'display_name' => $validated['name'],
+                'purchase_price' => $validated['purchase_price'] ?? null,
+                'selling_price' => $validated['selling_price'] ?? null,
+                'retail_price' => $validated['retail_price'] ?? null,
+                'wholesale_price' => $validated['wholesale_price'] ?? null,
+                'stock_quantity' => (float) ($validated['stock_quantity'] ?? 0),
+                'selling_type' => $validated['selling_type'] ?? 'both',
+            ]);
+            $product->unsetRelation('currentBranchStock');
+
+            return redirect()->route('products.index')
+                ->with('success', 'Saved for this branch only. Admin catalog product was not changed.');
+        } catch (\Exception $e) {
+            return back()->withErrors(['error' => 'Failed to update branch product: '.$e->getMessage()])->withInput();
+        }
+    }
+
+    /**
+     * Remove incomplete unit / conversion form rows before validation.
+     * Prevents "units.N.unit_id is required when units is present" on empty selects.
+     */
+    protected function scrubIncompleteUnitPayload(Request $request): void
+    {
+        $units = $request->input('units');
+        if (is_array($units)) {
+            $units = array_values(array_filter($units, function ($row) {
+                if (! is_array($row)) {
+                    return false;
+                }
+
+                return isset($row['unit_id']) && $row['unit_id'] !== '' && $row['unit_id'] !== null;
+            }));
+            $request->merge(['units' => $units]);
+        }
+
+        $conversions = $request->input('conversions');
+        if (is_array($conversions)) {
+            $conversions = array_values(array_filter($conversions, function ($row) {
+                if (! is_array($row)) {
+                    return false;
+                }
+                $from = $row['from_unit_id'] ?? null;
+                $to = $row['to_unit_id'] ?? null;
+                $factor = $row['factor'] ?? ($row['conversion_factor'] ?? null);
+
+                return $from !== null && $from !== ''
+                    && $to !== null && $to !== ''
+                    && $factor !== null && $factor !== '';
+            }));
+            $request->merge(['conversions' => $conversions]);
+        }
     }
 }

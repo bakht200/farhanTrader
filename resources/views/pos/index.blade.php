@@ -386,26 +386,8 @@
                 // Get base unit
                 $baseUnit = $p->base_unit_id ?? $p->unit_id;
                 $baseUnitName = $p->baseUnit ? $p->baseUnit->short_name : ($p->unit ? $p->unit->short_name : '');
-                
-                // Get all selling units with prices
-                $sellingUnits = $p->productUnits()->active()->with('unit')->get()->map(function($pu) {
-                    return [
-                        'unit_id' => $pu->unit_id,
-                        'unit_name' => $pu->unit->short_name ?? '',
-                        'is_base_unit' => $pu->is_base_unit,
-                        'selling_price' => $pu->selling_price ?? 0,
-                    ];
-                })->toArray();
-                
-                // If no ProductUnit records exist, create default from product unit
-                if (empty($sellingUnits) && $p->unit) {
-                    $sellingUnits = [[
-                        'unit_id' => $p->unit_id,
-                        'unit_name' => $p->unit->short_name ?? '',
-                        'is_base_unit' => true,
-                        'selling_price' => $p->selling_price ?? 0,
-                    ]];
-                }
+                // Branch overrides applied (base unit + scaled multi-unit prices)
+                $sellingUnits = $p->sellingUnitsForPos();
                 
                 return [
                     'id' => $p->id,
@@ -421,7 +403,7 @@
                     'unit_id' => $baseUnit,
                     'unit_name' => $baseUnitName,
                     'base_unit_id' => $baseUnit,
-                    'selling_units' => $sellingUnits, // Array of units with prices
+                    'selling_units' => $sellingUnits, // Array of units with branch-aware prices
                     'image' => $p->image ? asset('storage/' . $p->image) : null,
                 ];
             })->values();
@@ -886,7 +868,7 @@
                 return;
             }
 
-            // Determine initial selling price based on selling_type
+            // Determine initial selling price based on selling_type (branch-resolved product rates)
             let initialPrice = product.selling_price;
             if (product.selling_type === 'retail' && product.retail_price) {
                 initialPrice = product.retail_price;
@@ -910,12 +892,14 @@
                 const defaultUnit = product.selling_units && product.selling_units.length > 0
                     ? product.selling_units.find(u => u.is_base_unit) || product.selling_units[0]
                     : { unit_id: product.unit_id, unit_name: product.unit_name, selling_price: initialPrice };
+                // Prefer branch product rate; fall back to selling-unit price only if product rate is missing
+                const cartPrice = parseFloat(initialPrice) || parseFloat(defaultUnit.selling_price) || 0;
                 
                 cart.push({
                     product_id: productIdNum, // Use the normalized ID
                     name: product.name,
                     purchase_price: parseFloat(product.purchase_price) || 0,
-                    selling_price: parseFloat(defaultUnit.selling_price || initialPrice) || 0,
+                    selling_price: cartPrice,
                     retail_price: parseFloat(product.retail_price || product.selling_price) || 0,
                     wholesale_price: parseFloat(product.wholesale_price || product.selling_price) || 0,
                     selling_type: product.selling_type || 'retail',
@@ -1121,34 +1105,47 @@
                 // Update unit name
                 item.unit_name = unitConfig.unit_name || unitConfig.unit_short_name || '';
                 
+                // Branch product rates (for base unit) — prefer over shared unit table
+                let branchBasePrice = parseFloat(product.selling_price) || 0;
+                if (product.selling_type === 'retail' && product.retail_price) {
+                    branchBasePrice = parseFloat(product.retail_price) || branchBasePrice;
+                } else if (product.selling_type === 'wholesale' && product.wholesale_price) {
+                    branchBasePrice = parseFloat(product.wholesale_price) || branchBasePrice;
+                } else if (product.selling_type === 'both' && product.retail_price) {
+                    branchBasePrice = parseFloat(product.retail_price) || branchBasePrice;
+                }
+
                 // Update price
-                if (unitConfig.selling_price && unitConfig.selling_price > 0) {
-                    // Use configured price directly
+                if (unitConfig.is_base_unit && branchBasePrice > 0) {
+                    item.selling_price = branchBasePrice;
+                } else if (unitConfig.selling_price && unitConfig.selling_price > 0) {
+                    // Use branch-scaled unit price from selling_units
                     item.selling_price = parseFloat(unitConfig.selling_price);
                 } else {
                     // Calculate from base unit using conversion factor
                     const baseUnit = product.selling_units.find(u => u.is_base_unit);
-                    if (baseUnit && baseUnit.unit_id != newUnitId && baseUnit.selling_price) {
+                    const basePrice = branchBasePrice || (baseUnit ? parseFloat(baseUnit.selling_price) : 0);
+                    if (baseUnit && baseUnit.unit_id != newUnitId && basePrice) {
                         try {
                             const response = await fetch(`/products/${product.id}/conversion/${baseUnit.unit_id}/${newUnitId}`);
                             const data = await response.json();
                             if (data.success && data.conversion_factor) {
                                 // Price = base_unit_price × conversion_factor
-                                item.selling_price = parseFloat(baseUnit.selling_price) * parseFloat(data.conversion_factor);
+                                item.selling_price = parseFloat(basePrice) * parseFloat(data.conversion_factor);
                             } else {
                                 console.warn('Conversion factor not found, using base unit price');
-                                item.selling_price = parseFloat(baseUnit.selling_price);
+                                item.selling_price = parseFloat(basePrice);
                             }
                         } catch (e) {
                             console.error('Error fetching conversion factor:', e);
                             // Fallback to base unit price
-                            if (baseUnit.selling_price) {
-                                item.selling_price = parseFloat(baseUnit.selling_price);
+                            if (basePrice) {
+                                item.selling_price = parseFloat(basePrice);
                             }
                         }
-                    } else if (baseUnit && baseUnit.selling_price) {
+                    } else if (basePrice) {
                         // Same unit as base, use base price
-                        item.selling_price = parseFloat(baseUnit.selling_price);
+                        item.selling_price = parseFloat(basePrice);
                     }
                 }
             } else {

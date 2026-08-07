@@ -446,7 +446,7 @@
         </div>
 
         <!-- Multiple Units & Conversions Section -->
-        <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="bg-white rounded-lg shadow-sm p-6" id="units-conversions-section" @if(!empty($branchOnlyEdits)) data-branch-readonly="1" @endif>
             <div class="flex items-center mb-6">
                 <div class="bg-orange-100 rounded-full p-2 mr-3">
                     <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -456,6 +456,12 @@
                 <h3 class="text-lg font-semibold text-gray-900">Selling Units & Conversions</h3>
             </div>
 
+            @if (!empty($branchOnlyEdits))
+                <div class="mb-4 p-3 bg-gray-50 border border-gray-200 text-sm text-gray-700 rounded">
+                    Units and conversions are managed by Admin and are not changed when you save branch prices.
+                </div>
+            @endif
+
             <div class="mb-4">
                 <p class="text-sm text-gray-600 mb-4">
                     Configure additional selling units for this product. The base unit (selected above) will be automatically included. Set conversion factors to convert between units.
@@ -463,10 +469,15 @@
             </div>
 
             <!-- Hidden base unit data (auto-populated from base_unit_id) -->
-            <input type="hidden" id="base-unit-id-hidden" name="units[0][unit_id]" value="{{ $product->base_unit_id ?? $product->unit_id }}">
+            <input type="hidden" id="base-unit-id-hidden" @if(empty($branchOnlyEdits)) name="units[0][unit_id]" @endif value="{{ $product->base_unit_id ?? $product->unit_id }}">
+            @if(empty($branchOnlyEdits))
             <input type="hidden" name="units[0][is_base_unit]" value="1">
             <input type="hidden" id="base-unit-retail-price-hidden" name="units[0][retail_price]" value="{{ $product->retail_price ?? '' }}">
             <input type="hidden" id="base-unit-wholesale-price-hidden" name="units[0][wholesale_price]" value="{{ $product->wholesale_price ?? '' }}">
+            @else
+            <input type="hidden" id="base-unit-retail-price-hidden" value="{{ $product->retail_price ?? '' }}">
+            <input type="hidden" id="base-unit-wholesale-price-hidden" value="{{ $product->wholesale_price ?? '' }}">
+            @endif
 
             <!-- Locked Base Unit Display -->
             <div id="base-unit-display" class="mb-4 p-4 border-2 border-orange-300 rounded-lg bg-orange-50">
@@ -515,17 +526,19 @@
                         <div class="p-4 border border-gray-300 rounded-lg bg-gray-50" id="selling-unit-{{ $sellingUnitIndex }}">
                             <div class="flex items-center justify-between mb-3">
                                 <label class="text-sm font-semibold text-gray-700">Selling Unit</label>
+                                @if(empty($branchOnlyEdits))
                                 <button type="button" onclick="removeSellingUnit({{ $sellingUnitIndex }})" class="text-red-600 hover:text-red-800">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                     </svg>
                                 </button>
+                                @endif
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label class="block text-xs text-gray-600 mb-1">Unit <span class="text-red-500">*</span></label>
-                                    <select name="units[{{ $sellingUnitIndex }}][unit_id]" 
-                                            required
+                                    <select @if(empty($branchOnlyEdits)) name="units[{{ $sellingUnitIndex }}][unit_id]" @endif
+                                            @if(!empty($branchOnlyEdits)) disabled @else required @endif
                                             class="w-full px-3 py-2 border border-gray-300 rounded-md">
                                         <option value="">Select Unit</option>
                                         @foreach($units as $unit)
@@ -536,18 +549,21 @@
                                             </option>
                                         @endforeach
                                     </select>
+                                    @if(empty($branchOnlyEdits))
                                     <input type="hidden" name="units[{{ $sellingUnitIndex }}][is_base_unit]" value="0">
                                     <input type="hidden" name="units[{{ $sellingUnitIndex }}][id]" value="{{ $productUnit->id }}">
+                                    @endif
                                     <p class="text-xs text-gray-500 mt-1">Price will be calculated from base unit if not set</p>
                                 </div>
                                 <div>
                                     <label class="block text-xs text-gray-600 mb-1">Price per Unit (Optional)</label>
                                     <input type="number" 
-                                           name="units[{{ $sellingUnitIndex }}][selling_price]" 
+                                           @if(empty($branchOnlyEdits)) name="units[{{ $sellingUnitIndex }}][selling_price]" @endif
                                            value="{{ $productUnit->selling_price ? number_format($productUnit->selling_price, 2, '.', '') : '' }}"
                                            step="0.01"
                                            min="0"
                                            max="999999.99"
+                                           @if(!empty($branchOnlyEdits)) disabled @endif
                                            class="w-full px-3 py-2 border border-gray-300 rounded-md"
                                            placeholder="Auto-calculated"
                                            onblur="this.value = this.value ? parseFloat(this.value).toFixed(2) : ''">
@@ -561,6 +577,7 @@
             </div>
 
             <!-- Add Selling Unit Button -->
+            @if(empty($branchOnlyEdits))
             <button type="button" 
                     onclick="addSellingUnit()" 
                     class="mt-4 w-full bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md border-2 border-dashed border-gray-300 flex items-center justify-center">
@@ -569,6 +586,7 @@
                 </svg>
                 Add Selling Unit
             </button>
+            @endif
 
             <!-- Conversions Container -->
             <div class="mt-6 pt-6 border-t border-gray-200">
@@ -588,7 +606,9 @@
                                 <div class="grid grid-cols-4 gap-3 items-end">
                                     <div>
                                         <label class="block text-xs text-gray-600 mb-1">From Unit <span class="text-red-500">*</span></label>
+                                        @if(empty($branchOnlyEdits))
                                         <input type="hidden" name="conversions[{{ $conversionIndex }}][from_unit_id]" value="{{ $baseUnitId }}" class="conversion-from-unit-hidden">
+                                        @endif
                                         <input type="text" 
                                                value="{{ $baseUnitName }}"
                                                readonly
@@ -598,8 +618,8 @@
                                     </div>
                                     <div>
                                         <label class="block text-xs text-gray-600 mb-1">To Unit <span class="text-red-500">*</span></label>
-                                        <select name="conversions[{{ $conversionIndex }}][to_unit_id]" 
-                                                required
+                                        <select @if(empty($branchOnlyEdits)) name="conversions[{{ $conversionIndex }}][to_unit_id]" @endif
+                                                @if(!empty($branchOnlyEdits)) disabled @else required @endif
                                                 class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm conversion-to-unit"
                                                 onchange="validateConversionRow(this.closest('[id^=conversion-]'))">
                                             <option value="">Select</option>
@@ -614,26 +634,30 @@
                                     <div>
                                         <label class="block text-xs text-gray-600 mb-1">Conversion Factor <span class="text-red-500">*</span></label>
                                         <input type="number" 
-                                               name="conversions[{{ $conversionIndex }}][factor]" 
+                                               @if(empty($branchOnlyEdits)) name="conversions[{{ $conversionIndex }}][factor]" @endif
                                                value="{{ number_format($conversion->conversion_factor, 2, '.', '') }}"
                                                step="0.01"
                                                min="0.01"
                                                max="999999.99"
-                                               required
+                                               @if(!empty($branchOnlyEdits)) disabled @else required @endif
                                                class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm conversion-factor"
                                                placeholder="e.g., 50.00"
                                                onchange="validateConversionRow(this.closest('[id^=conversion-]'))"
                                                onblur="this.value = parseFloat(this.value || 0).toFixed(2); validateConversionRow(this.closest('[id^=conversion-]'))">
+                                        @if(empty($branchOnlyEdits))
                                         <input type="hidden" name="conversions[{{ $conversionIndex }}][id]" value="{{ $conversion->id }}">
+                                        @endif
                                         <span class="text-xs text-gray-500">(1 from_unit = factor × to_unit)</span>
                                         <span class="text-xs text-red-500 conversion-error hidden block"></span>
                                     </div>
                                     <div>
+                                        @if(empty($branchOnlyEdits))
                                         <button type="button" 
                                                 onclick="removeConversion({{ $conversionIndex }})" 
                                                 class="w-full px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm">
                                             Remove
                                         </button>
+                                        @endif
                                     </div>
                                 </div>
                             </div>
@@ -641,11 +665,13 @@
                         @endforeach
                     @endif
                 </div>
+                @if(empty($branchOnlyEdits))
                 <button type="button" 
                         onclick="addConversion()" 
                         class="mt-3 text-sm text-orange-600 hover:text-orange-700 underline">
                     + Add Conversion Factor
                 </button>
+                @endif
             </div>
         </div>
 

@@ -21,10 +21,19 @@ class Customer extends Model
 
         static::creating(function ($customer) {
             if (empty($customer->customer_id)) {
-                // Get the next ID that will be assigned
-                $lastCustomer = Customer::orderBy('id', 'desc')->first();
-                $nextId = $lastCustomer ? $lastCustomer->id + 1 : 1;
-                $customer->customer_id = 'CN-' . str_pad($nextId, 3, '0', STR_PAD_LEFT);
+                // customer_id is globally unique — ignore branch scope
+                $codes = self::withoutGlobalScopes()
+                    ->where('customer_id', 'like', 'CN-%')
+                    ->pluck('customer_id');
+
+                $maxNumber = 0;
+                foreach ($codes as $code) {
+                    if (preg_match('/^CN-(\d+)$/', (string) $code, $m)) {
+                        $maxNumber = max($maxNumber, (int) $m[1]);
+                    }
+                }
+
+                $customer->customer_id = 'CN-'.str_pad((string) ($maxNumber + 1), 3, '0', STR_PAD_LEFT);
             }
         });
     }

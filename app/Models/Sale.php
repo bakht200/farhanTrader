@@ -52,36 +52,42 @@ class Sale extends Model
     }
 
     /**
-     * Generate next sequential sale number based on prefix
+     * Generate next sequential sale number based on prefix.
      * Format: PREFIX-000001
-     * 
-     * @param string $prefix Prefix for the sale number (e.g., 'SALE', 'ADJ', 'HOLD', 'PB')
-     * @return string Next sequential sale number
+     *
+     * Must ignore the branch global scope: sale_number is unique across ALL branches,
+     * so Branch 2 cannot restart at SALE-000001 if Branch 1 already used it.
+     *
+     * @param  string  $prefix  Prefix for the sale number (e.g., 'SALE', 'ADJ', 'HOLD', 'PB')
      */
     public static function generateSaleNumber(string $prefix = 'SALE'): string
     {
-        // Get all sale numbers with this prefix
-        $sales = self::where('sale_number', 'like', $prefix . '-%')
-            ->pluck('sale_number')
-            ->toArray();
+        $query = self::withoutGlobalScopes()
+            ->where('sale_number', 'like', $prefix.'-%');
+
+        // Only lock when already inside a DB transaction (POS / sync / payments)
+        if (\Illuminate\Support\Facades\DB::transactionLevel() > 0) {
+            $query->lockForUpdate();
+        }
+
+        $sales = $query->pluck('sale_number')->toArray();
 
         $maxNumber = 0;
-        
+
         foreach ($sales as $saleNumber) {
-            // Extract the number part after the prefix and dash
-            // Format: PREFIX-000001
-            $parts = explode('-', $saleNumber);
+            // Format: PREFIX-000001 (ignore temp/offline ids like SALE-TMP-...)
+            $parts = explode('-', (string) $saleNumber);
             if (count($parts) === 2 && is_numeric($parts[1])) {
-                $number = (int)$parts[1];
+                $number = (int) $parts[1];
                 if ($number > $maxNumber) {
                     $maxNumber = $number;
                 }
             }
         }
 
-        // Increment and format with zero padding (6 digits)
         $nextNumber = $maxNumber + 1;
-        return $prefix . '-' . str_pad($nextNumber, 6, '0', STR_PAD_LEFT);
+
+        return $prefix.'-'.str_pad((string) $nextNumber, 6, '0', STR_PAD_LEFT);
     }
 
     /**
