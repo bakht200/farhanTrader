@@ -1,8 +1,30 @@
 import Dexie from 'dexie';
 
-export const CACHE_VERSION = 1;
+export const CACHE_VERSION = 2;
 
 export const db = new Dexie('farhantrader_offline');
+
+const stores = {
+    meta: 'key',
+    vault: 'email',
+    localSession: 'key',
+    products: 'id, branch_id, name, sku, owner_branch_id, updated_at',
+    categories: 'id, name, updated_at',
+    units: 'id, name, updated_at',
+    customers: 'id, branch_id, name, client_uuid, updated_at',
+    suppliers: 'id, branch_id, name, client_uuid, updated_at',
+    sales: 'id, branch_id, client_uuid, customer_id, sale_date, updated_at',
+    saleItems: 'id, sale_id, client_uuid, product_id',
+    orders: 'id, branch_id, client_uuid, status, updated_at',
+    expenses: 'id, branch_id, client_uuid, updated_at',
+    invoices: 'id, branch_id, sale_id, updated_at',
+    branches: 'id, name',
+    productUnits: 'id, product_id, unit_id',
+    unitConversions: 'id, product_id',
+    branchStocks: '[branch_id+product_id], branch_id, product_id',
+    outbox: '++id, client_uuid, entity, status, created_at, user_id',
+    conflicts: '++id, client_uuid, created_at',
+};
 
 db.version(1).stores({
     meta: 'key',
@@ -25,6 +47,9 @@ db.version(1).stores({
     outbox: '++id, client_uuid, entity, status, created_at, user_id',
     conflicts: '++id, client_uuid, created_at',
 });
+
+// v2: owner_branch_id index; branch stock rows may include display_name / price overrides
+db.version(2).stores(stores);
 
 export async function getMeta(key, fallback = null) {
     const row = await db.meta.get(key);

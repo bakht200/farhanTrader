@@ -12,12 +12,21 @@ class BranchProductStock extends Model
         'product_id',
         'stock_quantity',
         'selling_type',
+        'display_name',
+        'purchase_price',
+        'selling_price',
+        'retail_price',
+        'wholesale_price',
     ];
 
     protected function casts(): array
     {
         return [
             'stock_quantity' => 'decimal:6',
+            'purchase_price' => 'decimal:2',
+            'selling_price' => 'decimal:2',
+            'retail_price' => 'decimal:2',
+            'wholesale_price' => 'decimal:2',
         ];
     }
 

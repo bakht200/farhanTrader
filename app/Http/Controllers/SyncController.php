@@ -88,7 +88,7 @@ class SyncController extends Controller
             'full' => false,
             'server_time' => now()->toIso8601String(),
             'active_branch_id' => $branchId,
-            'cache_version' => 1,
+            'cache_version' => 2,
             'user' => $this->userPayload($user),
             'products' => $this->productsForBranch($branchId, $sinceAt),
             'categories' => Category::query()->where('updated_at', '>', $sinceAt)->get(),
@@ -114,7 +114,14 @@ class SyncController extends Controller
                 ->map(fn ($row) => [
                     'branch_id' => $row->branch_id,
                     'product_id' => $row->product_id,
-                    'quantity' => $row->quantity,
+                    'stock_quantity' => (float) $row->stock_quantity,
+                    'quantity' => (float) $row->stock_quantity,
+                    'selling_type' => $row->selling_type,
+                    'display_name' => $row->display_name,
+                    'purchase_price' => $row->purchase_price,
+                    'selling_price' => $row->selling_price,
+                    'retail_price' => $row->retail_price,
+                    'wholesale_price' => $row->wholesale_price,
                     'updated_at' => $row->updated_at,
                 ]),
             'deleted' => new \stdClass(),
@@ -374,7 +381,7 @@ class SyncController extends Controller
             'full' => true,
             'server_time' => now()->toIso8601String(),
             'active_branch_id' => $branchId,
-            'cache_version' => 1,
+            'cache_version' => 2,
             'user' => $this->userPayload($user),
             'products' => $this->productsForBranch($branchId),
             'categories' => Category::query()->orderBy('name')->get(),
@@ -397,7 +404,14 @@ class SyncController extends Controller
                 ->map(fn ($row) => [
                     'branch_id' => $row->branch_id,
                     'product_id' => $row->product_id,
-                    'quantity' => $row->quantity,
+                    'stock_quantity' => (float) $row->stock_quantity,
+                    'quantity' => (float) $row->stock_quantity,
+                    'selling_type' => $row->selling_type,
+                    'display_name' => $row->display_name,
+                    'purchase_price' => $row->purchase_price,
+                    'selling_price' => $row->selling_price,
+                    'retail_price' => $row->retail_price,
+                    'wholesale_price' => $row->wholesale_price,
                     'updated_at' => $row->updated_at,
                 ]),
         ];
@@ -405,18 +419,30 @@ class SyncController extends Controller
 
     protected function productsForBranch(?int $branchId, $sinceAt = null)
     {
-        $query = Product::query()->with(['currentBranchStock', 'unit', 'baseUnit']);
+        $branchId = $branchId ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $query = Product::query()
+            ->visibleToBranch($branchId)
+            ->with(['currentBranchStock', 'unit', 'baseUnit']);
         if ($sinceAt) {
             $query->where('updated_at', '>', $sinceAt);
         }
 
         return $query->orderBy('name')->limit(5000)->get()->map(function (Product $product) {
             $branchStock = $product->currentBranchStock;
+            $attrs = $product->getAttributes();
 
             return array_merge($product->toArray(), [
-                'stock_quantity' => (float) ($branchStock?->stock_quantity ?? $product->stock_quantity),
+                'owner_branch_id' => $attrs['owner_branch_id'] ?? null,
+                'name' => ($branchStock?->display_name !== null && $branchStock->display_name !== '')
+                    ? $branchStock->display_name
+                    : ($attrs['name'] ?? $product->name),
+                'purchase_price' => $branchStock?->purchase_price ?? ($attrs['purchase_price'] ?? null),
+                'selling_price' => $branchStock?->selling_price ?? ($attrs['selling_price'] ?? null),
+                'retail_price' => $branchStock?->retail_price ?? ($attrs['retail_price'] ?? null),
+                'wholesale_price' => $branchStock?->wholesale_price ?? ($attrs['wholesale_price'] ?? null),
+                'stock_quantity' => (float) ($branchStock?->stock_quantity ?? 0),
                 'selling_type' => $branchStock?->selling_type
-                    ?: ($product->getAttributes()['selling_type'] ?? 'retail'),
+                    ?: ($attrs['selling_type'] ?? 'retail'),
             ]);
         });
     }

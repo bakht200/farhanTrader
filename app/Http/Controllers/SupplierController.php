@@ -696,6 +696,13 @@ class SupplierController extends Controller
                         // Use base_unit_id if provided, otherwise use unit_id
                         $baseUnitId = $productData['base_unit_id'] ?? $unitId;
                         
+                        $creator = auth()->user();
+                        $currentBranchId = \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+                        $ownerBranchId = ($creator && $creator->isAdmin())
+                            ? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID
+                            : (int) ($creator->branch_id ?? $currentBranchId);
+                        $sharedCatalog = (int) $ownerBranchId === \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+
                         $product = Product::create([
                             'name' => $productName,
                             'slug' => Str::slug($productName . '-' . uniqid()),
@@ -715,12 +722,17 @@ class SupplierController extends Controller
                             'product_type' => 'single',
                             'is_active' => true,
                             'user_id' => auth()->id(),
+                            'owner_branch_id' => $ownerBranchId,
                         ]);
+                        if ((int) ($product->getAttributes()['owner_branch_id'] ?? 0) !== (int) $ownerBranchId) {
+                            $product->forceFill(['owner_branch_id' => $ownerBranchId])->save();
+                        }
                         app(\App\Services\BranchStockService::class)->initializeProduct(
                             $product,
                             (float) $quantity,
-                            null,
-                            $sellingType
+                            $sharedCatalog ? $currentBranchId : $ownerBranchId,
+                            $sellingType,
+                            $sharedCatalog
                         );
                         $productId = $product->id;
                         

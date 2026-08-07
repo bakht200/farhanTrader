@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Services\BranchStockService;
 use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -17,13 +18,18 @@ class Product extends Model
         'selling_type', 'total_units', 'supplier_name', 'supplier_phone', 'supplier_id',
         'product_type', 'quantity_alert', 'purchase_price', 'selling_price',
         'retail_price', 'wholesale_price', 'stock_quantity', 'low_stock_threshold',
-        'manufacturer', 'manufactured_date', 'expiry_date', 'image', 'is_active', 'user_id'
+        'manufacturer', 'manufactured_date', 'expiry_date', 'image', 'is_active', 'user_id',
+        'owner_branch_id',
     ];
 
     protected $casts = [
         'manufactured_date' => 'date',
         'expiry_date' => 'date',
         'stock_quantity' => 'decimal:6',
+        'purchase_price' => 'decimal:2',
+        'selling_price' => 'decimal:2',
+        'retail_price' => 'decimal:2',
+        'wholesale_price' => 'decimal:2',
     ];
 
     public function category(): BelongsTo
@@ -39,6 +45,11 @@ class Product extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function ownerBranch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class, 'owner_branch_id');
     }
 
     public function supplier(): BelongsTo
@@ -82,12 +93,126 @@ class Product extends Model
         return $this->productUnits()->baseUnit()->active()->with('unit')->first();
     }
 
+    public function isSharedCatalog(): bool
+    {
+        $owner = $this->owner_branch_id;
+
+        return $owner === null || (int) $owner === CurrentBranch::DEFAULT_BRANCH_ID;
+    }
+
+    public function isOwnedByBranch(?int $branchId): bool
+    {
+        if ($branchId === null) {
+            return false;
+        }
+
+        return (int) $this->owner_branch_id === (int) $branchId;
+    }
+
+    /**
+     * Shared catalog (owner branch 1 / null) OR private products for this branch.
+     */
+    public function scopeVisibleToBranch(Builder $query, ?int $branchId = null): Builder
+    {
+        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+
+        return $query->where(function (Builder $q) use ($branchId) {
+            $q->whereNull('owner_branch_id')
+                ->orWhere('owner_branch_id', CurrentBranch::DEFAULT_BRANCH_ID)
+                ->orWhere('owner_branch_id', $branchId);
+        });
+    }
+
+    public function scopeSharedCatalog(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->whereNull('owner_branch_id')
+                ->orWhere('owner_branch_id', CurrentBranch::DEFAULT_BRANCH_ID);
+        });
+    }
+
+    /**
+     * Whether saving should update the master products row (vs branch overrides only).
+     */
+    public function writesMasterForCurrentBranch(?int $branchId = null): bool
+    {
+        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+
+        if (! $this->isSharedCatalog() && $this->isOwnedByBranch($branchId)) {
+            return true;
+        }
+
+        return $this->isSharedCatalog() && (int) $branchId === CurrentBranch::DEFAULT_BRANCH_ID;
+    }
+
+    protected function branchOverrideValue(string $column): mixed
+    {
+        if ($this->relationLoaded('currentBranchStock')) {
+            return $this->currentBranchStock?->{$column};
+        }
+
+        $stock = BranchProductStock::query()
+            ->where('branch_id', CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('product_id', $this->id)
+            ->first();
+
+        return $stock?->{$column};
+    }
+
+    public function getNameAttribute($value): string
+    {
+        if (! $this->exists) {
+            return (string) ($value ?? '');
+        }
+
+        $override = $this->branchOverrideValue('display_name');
+        if ($override !== null && $override !== '') {
+            return (string) $override;
+        }
+
+        return (string) ($value ?? '');
+    }
+
+    public function getPurchasePriceAttribute($value): mixed
+    {
+        return $this->resolvePriceAttribute('purchase_price', $value);
+    }
+
+    public function getSellingPriceAttribute($value): mixed
+    {
+        return $this->resolvePriceAttribute('selling_price', $value);
+    }
+
+    public function getRetailPriceAttribute($value): mixed
+    {
+        return $this->resolvePriceAttribute('retail_price', $value);
+    }
+
+    public function getWholesalePriceAttribute($value): mixed
+    {
+        return $this->resolvePriceAttribute('wholesale_price', $value);
+    }
+
+    protected function resolvePriceAttribute(string $column, $value): mixed
+    {
+        if (! $this->exists) {
+            return $value;
+        }
+
+        $override = $this->branchOverrideValue($column);
+        if ($override !== null && $override !== '') {
+            return $override;
+        }
+
+        return $value;
+    }
+
     /**
      * Branch-aware stock quantity for the active branch.
      */
     public function getStockQuantityAttribute($value): float
     {
-        if (!$this->exists) {
+        if (! $this->exists) {
             return (float) ($value ?? 0);
         }
 
@@ -104,7 +229,7 @@ class Product extends Model
      */
     public function getSellingTypeAttribute($value): string
     {
-        if (!$this->exists) {
+        if (! $this->exists) {
             return $value ?: 'retail';
         }
 

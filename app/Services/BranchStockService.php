@@ -105,6 +105,59 @@ class BranchStockService
         );
     }
 
+    /**
+     * Upsert branch-local name/price/qty/selling_type overrides (does not touch products master).
+     *
+     * @param  array{
+     *     display_name?: ?string,
+     *     purchase_price?: ?float,
+     *     selling_price?: ?float,
+     *     retail_price?: ?float,
+     *     wholesale_price?: ?float,
+     *     stock_quantity?: ?float,
+     *     selling_type?: ?string,
+     * }  $overrides
+     */
+    public function setOverrides(Product|int $product, array $overrides, ?int $branchId = null): BranchProductStock
+    {
+        $productId = $product instanceof Product ? $product->id : $product;
+        $branchId = $this->branchId($branchId);
+
+        $existing = BranchProductStock::query()
+            ->where('branch_id', $branchId)
+            ->where('product_id', $productId)
+            ->first();
+
+        $defaultType = $product instanceof Product
+            ? ($product->getAttributes()['selling_type'] ?? 'both')
+            : (Product::query()->where('id', $productId)->value('selling_type') ?? 'both');
+
+        $payload = [
+            'stock_quantity' => array_key_exists('stock_quantity', $overrides)
+                ? max(0, (float) $overrides['stock_quantity'])
+                : ($existing ? (float) $existing->stock_quantity : 0),
+            'selling_type' => array_key_exists('selling_type', $overrides) && $overrides['selling_type']
+                ? (in_array($overrides['selling_type'], ['retail', 'wholesale', 'both'], true)
+                    ? $overrides['selling_type']
+                    : 'both')
+                : ($existing?->selling_type ?: ($defaultType ?: 'both')),
+        ];
+
+        foreach (['display_name', 'purchase_price', 'selling_price', 'retail_price', 'wholesale_price'] as $key) {
+            if (array_key_exists($key, $overrides)) {
+                $payload[$key] = $overrides[$key];
+            }
+        }
+
+        return BranchProductStock::query()->updateOrCreate(
+            [
+                'branch_id' => $branchId,
+                'product_id' => $productId,
+            ],
+            $payload
+        );
+    }
+
     public function increment(Product|int $product, float $amount, ?int $branchId = null): float
     {
         return $this->adjust($product, abs($amount), $branchId);
@@ -149,12 +202,17 @@ class BranchStockService
     }
 
     /**
-     * Create stock rows for a product across all branches.
-     * Current branch gets $initialQuantity; others get 0.
-     * All branches get the same initial selling_type (editable later per branch).
+     * Create stock rows for a product.
+     * Shared catalog: all branches (current gets qty, others 0).
+     * Private: only the owning/current branch.
      */
-    public function initializeProduct(Product|int $product, float $initialQuantity = 0, ?int $currentBranchId = null, ?string $sellingType = null): void
-    {
+    public function initializeProduct(
+        Product|int $product,
+        float $initialQuantity = 0,
+        ?int $currentBranchId = null,
+        ?string $sellingType = null,
+        bool $sharedCatalog = true
+    ): void {
         $productId = $product instanceof Product ? $product->id : $product;
         $currentBranchId = $this->branchId($currentBranchId);
         $now = now();
@@ -166,7 +224,11 @@ class BranchStockService
         }
         $sellingType = $sellingType ?: 'both';
 
-        $rows = Branch::query()->pluck('id')->map(function ($branchId) use ($productId, $currentBranchId, $initialQuantity, $sellingType, $now) {
+        $branchIds = $sharedCatalog
+            ? Branch::query()->pluck('id')->all()
+            : [$currentBranchId];
+
+        $rows = collect($branchIds)->map(function ($branchId) use ($productId, $currentBranchId, $initialQuantity, $sellingType, $now) {
             return [
                 'branch_id' => $branchId,
                 'product_id' => $productId,
@@ -187,13 +249,15 @@ class BranchStockService
     }
 
     /**
-     * Create zero stock rows for every product when a new branch is created.
+     * Create zero stock rows for shared catalog products when a new branch is created.
      */
     public function initializeBranch(Branch|int $branch): void
     {
         $branchId = $branch instanceof Branch ? $branch->id : $branch;
         $now = now();
-        $products = Product::query()->get(['id', 'selling_type']);
+        $products = Product::query()
+            ->sharedCatalog()
+            ->get(['id', 'selling_type']);
 
         $rows = [];
         foreach ($products as $product) {

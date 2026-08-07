@@ -12,15 +12,12 @@ import {
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense } from './outbox';
 import { db, getMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
+import { prefetchAppShells } from './prefetch';
 
 const PASSWORD_STASH_KEY = 'ftpos_enroll_password';
 
 function isLoginPage() {
     return !!document.querySelector('form[action*="login"]') || window.location.pathname.includes('/login');
-}
-
-function isAuthenticatedShell() {
-    return !!document.querySelector('meta[name="csrf-token"]') && !isLoginPage() && !!document.getElementById('ftpos-app-shell');
 }
 
 async function maybeEnrollAfterLogin() {
@@ -38,6 +35,20 @@ async function maybeEnrollAfterLogin() {
         showToast('Offline access enabled on this device');
     } catch (e) {
         console.warn('[offline] enroll failed', e);
+    }
+}
+
+async function warmOfflineShells() {
+    if (!isOnline()) {
+        return;
+    }
+    try {
+        const result = await prefetchAppShells();
+        if (result.ok > 0) {
+            console.info(`[offline] precached ${result.ok} pages for offline use`);
+        }
+    } catch (e) {
+        console.warn('[offline] page precache failed', e);
     }
 }
 
@@ -107,15 +118,29 @@ async function guardAuthenticatedOffline() {
     }
 }
 
-function registerServiceWorker() {
+async function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) {
-        return;
+        return null;
     }
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch((err) => {
-            console.warn('[offline] SW registration failed', err);
-        });
-    });
+    try {
+        const reg = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+        await reg.update().catch(() => {});
+        if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        // Take over immediately when a new SW is waiting
+        if (reg.installing) {
+            reg.installing.addEventListener('statechange', (e) => {
+                if (e.target.state === 'installed' && navigator.serviceWorker.controller) {
+                    e.target.postMessage({ type: 'SKIP_WAITING' });
+                }
+            });
+        }
+        return reg;
+    } catch (err) {
+        console.warn('[offline] SW registration failed', err);
+        return null;
+    }
 }
 
 function exposeApi() {
@@ -134,12 +159,13 @@ function exposeApi() {
         clearLocalSession,
         unlockOffline,
         hasAnyVault,
+        prefetchAppShells,
     };
 }
 
 export async function bootOfflineRuntime() {
     exposeApi();
-    registerServiceWorker();
+    await registerServiceWorker();
     startConnectivityMonitor();
     await mountOfflineBanner();
 
@@ -159,6 +185,8 @@ export async function bootOfflineRuntime() {
                     // If bootstrap fails due to auth, ignore; page still works online via Laravel
                 });
             }
+            // Auto-cache main app pages so offline nav works without visiting each page
+            warmOfflineShells();
             startSyncScheduler();
             const pending = await pendingOutboxCount();
             if (pending > 0) {
@@ -198,7 +226,11 @@ export async function bootOfflineRuntime() {
 
     syncOnlineOnlyBadges();
     window.addEventListener('ftpos-connectivity', (e) => {
-        syncOnlineOnlyBadges(e.detail?.status === 'online');
+        const online = e.detail?.status === 'online';
+        syncOnlineOnlyBadges(online);
+        if (online) {
+            warmOfflineShells();
+        }
     });
 
     document.addEventListener('click', (e) => {

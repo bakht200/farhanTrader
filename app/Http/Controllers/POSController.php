@@ -17,12 +17,23 @@ use Illuminate\Support\Facades\DB;
 
 class POSController extends Controller
 {
+    protected function findVisibleProduct(int $productId): ?Product
+    {
+        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+
+        return Product::query()
+            ->visibleToBranch($branchId)
+            ->whereKey($productId)
+            ->first();
+    }
+
     public function index(Request $request)
     {
         $categoryId = $request->get('category_id', 'all');
         $search = $request->get('search', '');
 
         $query = Product::where('is_active', true)
+            ->visibleToBranch(CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID)
             ->with(['category', 'unit', 'productUnits.unit', 'currentBranchStock']);
 
         // Category filter
@@ -149,7 +160,7 @@ class POSController extends Controller
                         ]);
                     }
                     // Validate product exists
-                    if (!Product::find($item['product_id'])) {
+                    if (!$this->findVisibleProduct((int) $item['product_id'])) {
                         throw \Illuminate\Validation\ValidationException::withMessages([
                             "items.{$index}.product_id" => ['Product not found.']
                         ]);
@@ -179,7 +190,7 @@ class POSController extends Controller
                 $productName = $item['product_name'] ?? 'Custom Product';
             } else {
                 // Regular product
-                $product = Product::find($item['product_id']);
+                $product = $this->findVisibleProduct((int) $item['product_id']);
                 
                 if (!$product) {
                     if ($request->expectsJson()) {
@@ -383,7 +394,7 @@ class POSController extends Controller
                 // No stock update for custom products
             } else {
                 // Regular product
-                $product = Product::find($item['product_id']);
+                $product = $this->findVisibleProduct((int) $item['product_id']);
                 
                 if (!$product) {
                     continue; // Skip if product not found (shouldn't happen after validation)
@@ -575,7 +586,7 @@ class POSController extends Controller
                         ]);
                     }
 
-                    if (!Product::find($item['product_id'])) {
+                    if (!$this->findVisibleProduct((int) $item['product_id'])) {
                         throw \Illuminate\Validation\ValidationException::withMessages([
                             "items.{$index}.product_id" => ['Product not found.']
                         ]);
@@ -601,7 +612,7 @@ class POSController extends Controller
             $isCustom = isset($item['is_custom']) && $item['is_custom'] == '1';
 
             if (!$isCustom) {
-                $product = Product::find($item['product_id']);
+                $product = $this->findVisibleProduct((int) $item['product_id']);
 
                 if (!$product) {
                     if ($request->expectsJson()) {
@@ -711,7 +722,7 @@ class POSController extends Controller
                         'total' => $itemTotal,
                     ]);
                 } else {
-                    $product = Product::find($item['product_id']);
+                    $product = $this->findVisibleProduct((int) $item['product_id']);
 
                     if (!$product) {
                         continue;

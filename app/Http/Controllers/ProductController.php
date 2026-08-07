@@ -17,9 +17,22 @@ use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
 {
+    protected function assertProductVisible(Product $product): void
+    {
+        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $visible = Product::query()
+            ->visibleToBranch($branchId)
+            ->whereKey($product->id)
+            ->exists();
+
+        abort_unless($visible, 404);
+    }
+
     public function index(Request $request)
     {
-        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy', 'currentBranchStock');
+        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy', 'currentBranchStock')
+            ->visibleToBranch($branchId);
 
         // Search functionality
         if ($request->filled('search')) {
@@ -180,6 +193,16 @@ class ProductController extends Controller
         }
 
         $validated['user_id'] = auth()->id();
+
+        $user = auth()->user();
+        $currentBranchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        // Shared catalog = admin, or any user belonging to Branch 1 (Phandu).
+        // Other branch users create private products (owner_branch_id = their branch).
+        $ownerBranchId = ($user && $user->isAdmin())
+            ? CurrentBranch::DEFAULT_BRANCH_ID
+            : (int) ($user->branch_id ?? $currentBranchId);
+        $sharedCatalog = (int) $ownerBranchId === CurrentBranch::DEFAULT_BRANCH_ID;
+        $validated['owner_branch_id'] = $ownerBranchId;
         
         // Set base_unit_id if provided, otherwise use unit_id
         if ($request->has('base_unit_id') && $request->base_unit_id) {
@@ -194,11 +217,16 @@ class ProductController extends Controller
             $validated['stock_quantity'] = 0; // legacy column; live stock is per-branch
 
             $product = Product::create($validated);
+            // Force owner in case mass-assignment was skipped on an older deploy
+            if ((int) $product->getAttributes()['owner_branch_id'] !== (int) $ownerBranchId) {
+                $product->forceFill(['owner_branch_id' => $ownerBranchId])->save();
+            }
             app(BranchStockService::class)->initializeProduct(
                 $product,
                 $initialStock,
-                null,
-                $validated['selling_type'] ?? 'both'
+                $sharedCatalog ? $currentBranchId : $ownerBranchId,
+                $validated['selling_type'] ?? 'both',
+                $sharedCatalog
             );
             
             // Create ProductUnit records
@@ -424,6 +452,7 @@ class ProductController extends Controller
 
     public function show(Product $product)
     {
+        $this->assertProductVisible($product);
         $product->load('category', 'unit', 'createdBy', 'currentBranchStock');
 
         $branchStocks = \App\Models\Branch::query()
@@ -447,6 +476,7 @@ class ProductController extends Controller
 
     public function edit(Product $product)
     {
+        $this->assertProductVisible($product);
         $categories = Category::where('is_active', true)->get();
         $units = Unit::where('is_active', true)->get();
         $suppliers = Supplier::where('is_active', true)->get();
@@ -474,12 +504,16 @@ class ProductController extends Controller
         
         // Load product history with supplier details
         $productHistory = $product->history()->with('supplier', 'supplierBill')->get();
+
+        $branchOnlyEdits = ! $product->writesMasterForCurrentBranch();
         
-        return view('products.edit', compact('product', 'categories', 'units', 'suppliers', 'productHistory', 'productUnits', 'conversions'));
+        return view('products.edit', compact('product', 'categories', 'units', 'suppliers', 'productHistory', 'productUnits', 'conversions', 'branchOnlyEdits'));
     }
 
     public function update(Request $request, Product $product)
     {
+        $this->assertProductVisible($product);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'slug' => 'nullable|string|max:255|unique:products,slug,' . $product->id,
@@ -579,11 +613,32 @@ class ProductController extends Controller
             $validated['base_unit_id'] = $validated['unit_id'];
         }
 
+        $branchStockQty = (float) ($validated['stock_quantity'] ?? 0);
+        unset($validated['stock_quantity']); // do not write shared legacy column from form
+
+        // Shared product on a non-admin branch: save name/prices/qty for this branch only
+        if (! $product->writesMasterForCurrentBranch()) {
+            try {
+                app(BranchStockService::class)->setOverrides($product, [
+                    'display_name' => $validated['name'],
+                    'purchase_price' => $validated['purchase_price'] ?? null,
+                    'selling_price' => $validated['selling_price'] ?? null,
+                    'retail_price' => $validated['retail_price'] ?? null,
+                    'wholesale_price' => $validated['wholesale_price'] ?? null,
+                    'stock_quantity' => $branchStockQty,
+                    'selling_type' => $validated['selling_type'] ?? 'both',
+                ]);
+                $product->unsetRelation('currentBranchStock');
+
+                return redirect()->route('products.index')
+                    ->with('success', 'Saved for this branch only. Admin catalog product was not changed.');
+            } catch (\Exception $e) {
+                return back()->withErrors(['error' => 'Failed to update branch product: '.$e->getMessage()])->withInput();
+            }
+        }
+
         DB::beginTransaction();
         try {
-            $branchStockQty = (float) ($validated['stock_quantity'] ?? 0);
-            unset($validated['stock_quantity']); // do not write shared legacy column from form
-
             $product->update($validated);
             $product->setBranchStock($branchStockQty);
             $product->setBranchSellingType($validated['selling_type'] ?? 'both');
@@ -986,6 +1041,19 @@ class ProductController extends Controller
 
     public function destroy(Product $product)
     {
+        $this->assertProductVisible($product);
+        $user = auth()->user();
+
+        if ($product->isSharedCatalog()) {
+            abort_unless($user && $user->isAdmin(), 403, 'Only admin can delete shared catalog products.');
+        } else {
+            abort_unless(
+                $user && ($user->isAdmin() || $product->isOwnedByBranch($user->branch_id)),
+                403,
+                'You can only delete products owned by your branch.'
+            );
+        }
+
         // Delete image if exists
         if ($product->image) {
             Storage::disk('public')->delete($product->image);
@@ -1000,6 +1068,7 @@ class ProductController extends Controller
         $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
 
         $query = Product::with('category', 'unit', 'createdBy', 'currentBranchStock')
+            ->visibleToBranch($branchId)
             ->leftJoin('branch_product_stocks', function ($join) use ($branchId) {
                 $join->on('branch_product_stocks.product_id', '=', 'products.id')
                     ->where('branch_product_stocks.branch_id', '=', $branchId);
@@ -1050,7 +1119,8 @@ class ProductController extends Controller
             ->appends($request->query());
 
         $categories = Category::where('is_active', true)->orderBy('name')->get();
-        $brands = Product::whereNotNull('brand')
+        $brands = Product::visibleToBranch($branchId)
+            ->whereNotNull('brand')
             ->where('brand', '!=', '')
             ->distinct()
             ->pluck('brand')
@@ -1065,7 +1135,10 @@ class ProductController extends Controller
      */
     public function getAllProducts(Request $request)
     {
-        $query = Product::where('is_active', true)->with('category', 'unit', 'currentBranchStock');
+        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $query = Product::where('is_active', true)
+            ->visibleToBranch($branchId)
+            ->with('category', 'unit', 'currentBranchStock');
 
         // Search functionality
         if ($request->filled('search')) {

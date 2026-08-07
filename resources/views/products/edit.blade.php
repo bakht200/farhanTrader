@@ -64,6 +64,13 @@
         </div>
     @endif
 
+    @if (!empty($branchOnlyEdits))
+        <div class="mb-4 p-4 bg-amber-50 border border-amber-300 text-amber-900 rounded">
+            Name, prices, stock, and selling type save <strong>for this branch only</strong>. The Admin catalog product is not changed.
+            Category, SKU, image, and units stay as set by Admin.
+        </div>
+    @endif
+
     <form method="POST" action="{{ route('products.update', $product) }}" enctype="multipart/form-data" class="space-y-6" id="product-form">
         @csrf
         @method('PUT')
