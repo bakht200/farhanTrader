@@ -359,6 +359,9 @@ class POSController extends Controller
             }
 
         // Create sale items
+        $stockAlerts = [];
+        $stockChangeTracker = []; // product_id => [name, oldQty, newQty]
+
         foreach ($request->input('items', []) as $item) {
             $isCustom = isset($item['is_custom']) && $item['is_custom'] == '1';
             
@@ -404,7 +407,8 @@ class POSController extends Controller
                 $unitId = $item['unit_id'] ?? $product->base_unit_id ?? $product->unit_id;
                 
                 $quantityInBaseUnit = $this->resolveQuantityInBaseUnit($product, (float) $item['quantity'], $unitId ? (int) $unitId : null);
-                if ($quantityInBaseUnit > ((float) $product->stock_quantity + 0.000001)) {
+                $currentQty = (float) $product->stock_quantity;
+                if ($quantityInBaseUnit > ($currentQty + 0.000001)) {
                     throw new \Exception("Insufficient stock for {$product->name}. Available: {$product->stock_quantity}");
                 }
                 
@@ -421,8 +425,38 @@ class POSController extends Controller
                 ]);
 
                 // Update product stock using base unit quantity
-                $product->decrementStock( $quantityInBaseUnit);
+                $newQty = $product->decrementStock($quantityInBaseUnit);
+
+                if (! isset($stockChangeTracker[$product->id])) {
+                    $stockChangeTracker[$product->id] = [
+                        'name' => $product->name,
+                        'oldQty' => $currentQty,
+                        'newQty' => $newQty,
+                    ];
+                } else {
+                    $stockChangeTracker[$product->id]['newQty'] = $newQty;
+                }
             }
+        }
+
+        foreach ($stockChangeTracker as $productId => $change) {
+            $oldQty = (float) $change['oldQty'];
+            $newQty = (float) $change['newQty'];
+            $alertLevel = null;
+            if ($oldQty > 0 && $newQty <= 0) {
+                $alertLevel = 'out';
+            } elseif ($oldQty > 5 && $newQty <= 5) {
+                $alertLevel = 'low';
+            }
+            if ($alertLevel === null) {
+                continue;
+            }
+            $stockAlerts[] = [
+                'product_id' => (int) $productId,
+                'name' => $change['name'],
+                'remaining' => round(max(0, $newQty), 2),
+                'level' => $alertLevel,
+            ];
         }
 
         // If customer paid extra (more than current sale amount), create adjustment record
@@ -529,7 +563,8 @@ class POSController extends Controller
                 'remaining_balance' => $receiptRemainingBalance,
                 'grand_total' => round($grandTotal, 2),
                 'subtotal' => round($totalAmount, 2),
-                'is_edit' => $isEditing
+                'is_edit' => $isEditing,
+                'stock_alerts' => $stockAlerts,
             ]);
         }
 

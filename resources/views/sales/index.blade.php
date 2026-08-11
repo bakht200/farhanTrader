@@ -410,7 +410,17 @@
         }
 
         // Print sale invoice receipt
-        function printSaleInvoice(saleId) {
+        async function printSaleInvoice(saleId) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml(typeof receiptDocTitle !== 'undefined' ? receiptDocTitle : 'Order Receipt')
+                : '';
             fetch(`/sales/${saleId}`, {
                 method: 'GET',
                 headers: {
@@ -534,25 +544,7 @@
                         </style>
                     </head>
                     <body>
-                        <div class="header">
-                            <h2>FARHAN TRADERS</h2>
-                            <div class="business-info">
-                                <div class="business-service">
-                                    Deals In Food Chemicals / Non Food Chemicals
-                                </div>
-                                <div class="business-contact">
-                                    <div class="business-contact-left">
-                                        <div>Ph: 091-2561301</div>
-                                        <div>Mob: 0313-9829984</div>
-                                        <div>Mob: 0313-6777811</div>
-                                    </div>
-                                    <div class="business-contact-right">
-                                        <div>Email: farhan.akhtar90@yahoo.com</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <p style="margin-top: 10px;">Order Receipt</p>
-                        </div>
+${(window.FTReceipt && window.FTReceipt.headerHtml) ? window.FTReceipt.headerHtml('Order Receipt') : ''}
                         <div class="order-info">
                             <div>
                                 <span>Sale Number:</span>
@@ -660,7 +652,17 @@
         }
 
         // Print Sales Report
-        function printSalesReport() {
+        async function printSalesReport() {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml(typeof receiptDocTitle !== 'undefined' ? receiptDocTitle : 'Order Receipt')
+                : '';
             // Get current filter values from the form
             const form = document.getElementById('search-form');
             const formData = new FormData(form);
@@ -840,26 +842,9 @@
                             </style>
                         </head>
                         <body>
-                            <div class="header">
-                                <h1>FARHAN TRADERS</h1>
-                                <div class="business-info">
-                                    <div class="business-service">
-                                        Deals In Food Chemicals / Non Food Chemicals
-                                    </div>
-                                    <div class="business-contact">
-                                        <div>
-                                            <div>Ph: 091-2561301</div>
-                                            <div>Mob: 0313-9829984, 0313-6777811</div>
-                                        </div>
-                                        <div>
-                                            <div>Email: farhan.akhtar90@yahoo.com</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <p style="margin-top: 10px;">Sales Report</p>
-                                <p>Generated on: ${formatDateTime(new Date().toISOString())}</p>
-                            </div>
-                            
+                            ${(window.FTReceipt && window.FTReceipt.headerHtml) ? window.FTReceipt.headerHtml('Sales Report') : ''}
+                            <p style="text-align:center;font-size:10px;margin:4px 0 12px;">Generated on: ${formatDateTime(new Date().toISOString())}</p>
+
                             <div class="filter-info">
                                 <strong>Filters Applied:</strong> ${filterDesc}
                             </div>

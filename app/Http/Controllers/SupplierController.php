@@ -12,6 +12,7 @@ use App\Models\Category;
 use App\Models\Unit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class SupplierController extends Controller
@@ -947,8 +948,11 @@ class SupplierController extends Controller
         
         // Calculate bill amount from products if provided
         $billAmount = $validated['bill_amount'];
-        if (!empty($request->products)) {
-            $productTotal = collect($request->products)->sum('total');
+        $syncProducts = $request->has('products');
+        $productRows = $syncProducts ? ($request->input('products') ?? []) : null;
+
+        if ($syncProducts && ! empty($productRows)) {
+            $productTotal = collect($productRows)->sum('total');
             $billAmount = $productTotal;
             
             // Validate that amount matches product total
@@ -957,6 +961,10 @@ class SupplierController extends Controller
                     'bill_amount' => 'Bill amount must match the total of all products. Product total: PKR ' . number_format($productTotal, 2)
                 ])->withInput();
             }
+        } elseif ($syncProducts && empty($productRows)) {
+            return back()->withErrors([
+                'products' => 'Add at least one product, or cancel without clearing all bill lines.',
+            ])->withInput();
         }
         
         // Handle bill image upload or removal
@@ -979,65 +987,136 @@ class SupplierController extends Controller
         // Store old values for transaction update
         $oldBillAmount = $bill->bill_amount;
         $oldBillDate = $bill->bill_date;
-        
-        // Update bill
-        $bill->update([
-            'bill_number' => $validated['bill_number'] ?? null,
-            'bill_amount' => $billAmount,
-            'bill_date' => $validated['bill_date'],
-            'description' => $validated['description'],
-            'reference_number' => $validated['reference_number'],
-            'bill_image' => $billImagePath,
-        ]);
-        
-        // Update or recreate bill items if products are provided
-        if (!empty($request->products)) {
-            // Delete existing bill items
-            $bill->items()->delete();
-            
-            // Create new bill items
-            foreach ($request->products as $productData) {
-                SupplierBillItem::create([
-                    'supplier_bill_id' => $bill->id,
-                    'product_id' => $productData['product_id'] ?? null,
-                    'product_name' => $productData['product_name'] ?? '',
-                    'product_sku' => $productData['product_sku'] ?? null,
-                    'quantity' => $productData['quantity'] ?? 0,
-                    'unit_price' => $productData['unit_price'] ?? 0,
-                    'discount' => $productData['discount'] ?? 0,
-                    'tax' => $productData['tax'] ?? 0,
-                    'total' => $productData['total'] ?? 0,
-                ]);
-            }
-        }
-        
-        // Update related credit transaction if bill amount or date changed
-        $creditTransaction = $supplier->transactions()
-            ->where('type', 'credit')
-            ->where('supplier_bill_id', $bill->id)
-            ->first();
-            
-        if ($creditTransaction) {
-            $updateData = [];
-            
-            // Update amount if it changed
-            if (abs($oldBillAmount - $billAmount) > 0.01) {
-                $updateData['amount'] = $billAmount;
+
+        try {
+            DB::beginTransaction();
+
+            // Snapshot old purchased quantities before rewriting lines (purchase bill → stock in)
+            $oldQtyByProduct = [];
+            if ($syncProducts) {
+                $bill->loadMissing('items');
+                foreach ($bill->items as $oldItem) {
+                    if (! $oldItem->product_id) {
+                        continue;
+                    }
+                    $pid = (int) $oldItem->product_id;
+                    $oldQtyByProduct[$pid] = ($oldQtyByProduct[$pid] ?? 0) + (float) $oldItem->quantity;
+                }
             }
             
-            // Update transaction date if bill date changed
-            if ($oldBillDate->format('Y-m-d') !== $validated['bill_date']) {
-                $updateData['transaction_date'] = $validated['bill_date'];
+            // Update bill
+            $bill->update([
+                'bill_number' => $validated['bill_number'] ?? null,
+                'bill_amount' => $billAmount,
+                'bill_date' => $validated['bill_date'],
+                'description' => $validated['description'],
+                'reference_number' => $validated['reference_number'],
+                'bill_image' => $billImagePath,
+            ]);
+            
+            $newQtyByProduct = [];
+
+            // Update or recreate bill items if products are provided
+            if ($syncProducts) {
+                $bill->items()->delete();
+                
+                foreach ($productRows as $productData) {
+                    $productId = ! empty($productData['product_id']) ? (int) $productData['product_id'] : null;
+                    $quantity = (float) ($productData['quantity'] ?? 0);
+
+                    SupplierBillItem::create([
+                        'supplier_bill_id' => $bill->id,
+                        'product_id' => $productId,
+                        'product_name' => $productData['product_name'] ?? '',
+                        'product_sku' => $productData['product_sku'] ?? null,
+                        'quantity' => $quantity,
+                        'unit_price' => $productData['unit_price'] ?? 0,
+                        'discount' => $productData['discount'] ?? 0,
+                        'tax' => $productData['tax'] ?? 0,
+                        'total' => $productData['total'] ?? 0,
+                    ]);
+
+                    if ($productId && $quantity > 0) {
+                        $newQtyByProduct[$productId] = ($newQtyByProduct[$productId] ?? 0) + $quantity;
+                    }
+                }
+
+                // Apply stock delta once per product: new purchased qty - old purchased qty
+                $productIds = array_unique(array_merge(array_keys($oldQtyByProduct), array_keys($newQtyByProduct)));
+                foreach ($productIds as $productId) {
+                    $oldQty = (float) ($oldQtyByProduct[$productId] ?? 0);
+                    $newQty = (float) ($newQtyByProduct[$productId] ?? 0);
+                    $delta = $newQty - $oldQty;
+
+                    if (abs($delta) < 0.000001) {
+                        continue;
+                    }
+
+                    $product = Product::find($productId);
+                    if (! $product) {
+                        continue;
+                    }
+
+                    $stockBefore = (float) $product->stock_quantity;
+
+                    if ($delta > 0) {
+                        $stockAfter = $product->incrementStock($delta);
+                    } else {
+                        $stockAfter = $product->decrementStock(abs($delta));
+                    }
+
+                    ProductHistory::create([
+                        'product_id' => $productId,
+                        'supplier_id' => $supplier->id,
+                        'supplier_bill_id' => $bill->id,
+                        'type' => $delta > 0 ? 'quantity_added' : 'quantity_removed',
+                        'quantity_added' => $delta,
+                        'old_price' => $product->purchase_price,
+                        'new_price' => $product->purchase_price,
+                        'old_stock_quantity' => $stockBefore,
+                        'new_stock_quantity' => $stockAfter,
+                        'notes' => 'Stock adjusted from supplier bill edit #'.($bill->bill_number ?? $bill->id),
+                        'transaction_date' => $validated['bill_date'],
+                    ]);
+                }
             }
             
-            // Update description if changed
-            if ($validated['description'] && $creditTransaction->description !== $validated['description']) {
-                $updateData['description'] = $validated['description'];
+            // Update related credit transaction if bill amount or date changed
+            $creditTransaction = $supplier->transactions()
+                ->where('type', 'credit')
+                ->where('supplier_bill_id', $bill->id)
+                ->first();
+                
+            if ($creditTransaction) {
+                $updateData = [];
+                
+                // Update amount if it changed
+                if (abs($oldBillAmount - $billAmount) > 0.01) {
+                    $updateData['amount'] = $billAmount;
+                }
+                
+                // Update transaction date if bill date changed
+                if ($oldBillDate->format('Y-m-d') !== $validated['bill_date']) {
+                    $updateData['transaction_date'] = $validated['bill_date'];
+                }
+                
+                // Update description if changed
+                if ($validated['description'] && $creditTransaction->description !== $validated['description']) {
+                    $updateData['description'] = $validated['description'];
+                }
+                
+                if (! empty($updateData)) {
+                    $creditTransaction->update($updateData);
+                }
             }
-            
-            if (!empty($updateData)) {
-                $creditTransaction->update($updateData);
-            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return back()->withErrors([
+                'bill_amount' => 'Could not update bill: '.$e->getMessage(),
+            ])->withInput();
         }
         
         return redirect()->route('suppliers.show', $supplier)->with('success', 'Bill updated successfully.');

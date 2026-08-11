@@ -26,7 +26,7 @@
             </button>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
             <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Profit</p>
                 <p class="mt-2 text-3xl font-black text-emerald-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['total_profit'], 0) }}</p>
@@ -46,6 +46,15 @@
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Total Stock Value</p>
                 <p class="mt-2 text-3xl font-black text-amber-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['total_stock_value'] ?? 0, 0) }}</p>
                 <p class="mt-2 text-3xl font-black text-amber-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+                <p class="mt-1 text-[11px] text-gray-400" x-show="showStats" x-cloak>What’s left in shop</p>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-5">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Supplier Total</p>
+                <p class="mt-2 text-3xl font-black text-sky-600 tabular-nums" x-show="showStats" x-cloak>PKR {{ number_format($topStats['supplier_total'] ?? 0, 0) }}</p>
+                <p class="mt-2 text-3xl font-black text-sky-600/40 tabular-nums select-none" x-show="!showStats">••••••••</p>
+                <p class="mt-1 text-[11px] text-gray-400" x-show="showStats" x-cloak>
+                    All supplier bills · Remaining PKR {{ number_format($topStats['supplier_remaining'] ?? 0, 0) }}
+                </p>
             </div>
         </div>
     </div>

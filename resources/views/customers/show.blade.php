@@ -362,7 +362,17 @@
             document.getElementById('bills-summary-modal').classList.add('hidden');
         }
 
-        function printDayWiseBills(customerId) {
+        async function printDayWiseBills(customerId) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml(typeof receiptDocTitle !== 'undefined' ? receiptDocTitle : 'Order Receipt')
+                : '';
             const startDate = document.getElementById('print-start-date').value;
             const endDate = document.getElementById('print-end-date').value;
             if (!startDate || !endDate) {
@@ -435,7 +445,7 @@
                     </head>
                     <body>
                         <div class="header">
-                            <h2>FARHAN TRADERS</h2>
+                            <h2>${(window.FTReceipt && window.FTReceipt.displayTitle) ? window.FTReceipt.displayTitle() : 'Receipt'}</h2>
                             <p>Day-wise Bills Report</p>
                         </div>
                         <div class="customer-info">
@@ -622,7 +632,17 @@
                 alert('Error loading bills: ' + error.message);
             });
         }
-        function printBillsSummary(customerId) {
+        async function printBillsSummary(customerId) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml(typeof receiptDocTitle !== 'undefined' ? receiptDocTitle : 'Order Receipt')
+                : '';
             const startDate = document.getElementById('summary-start-date').value;
             const endDate = document.getElementById('summary-end-date').value;
             if (!startDate || !endDate) {
@@ -691,7 +711,7 @@
                     </head>
                     <body>
                         <div class="header">
-                            <h2>FARHAN TRADERS</h2>
+                            <h2>${(window.FTReceipt && window.FTReceipt.displayTitle) ? window.FTReceipt.displayTitle() : 'Receipt'}</h2>
                             <p>Bills Summary Report</p>
                         </div>
                         <div class="customer-info">

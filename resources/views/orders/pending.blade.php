@@ -482,7 +482,17 @@
         });
 
         // Print order bill. If modalAmounts is passed (after Pay Balance), use those so receipt matches the modal.
-        function printOrderBill(orderId, modalAmounts) {
+        async function printOrderBill(orderId, modalAmounts) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml(typeof receiptDocTitle !== 'undefined' ? receiptDocTitle : 'Order Receipt')
+                : '';
             fetch(`/orders/${orderId}`, {
                 headers: {
                     'Accept': 'application/json',
@@ -586,25 +596,7 @@
                         </style>
                     </head>
                     <body>
-                        <div class="header">
-                            <h2>FARHAN TRADERS</h2>
-                            <div class="business-info">
-                                <div class="business-service">
-                                    Deals In Food Chemicals / Non Food Chemicals
-                                </div>
-                                <div class="business-contact">
-                                    <div class="business-contact-left">
-                                        <div>Ph: 091-2561301</div>
-                                        <div>Mob: 0313-9829984</div>
-                                        <div>Mob: 0313-6777811</div>
-                                    </div>
-                                    <div class="business-contact-right">
-                                        <div>Email: farhan.akhtar90@yahoo.com</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <p style="margin-top: 10px;">Order Receipt</p>
-                        </div>
+${(window.FTReceipt && window.FTReceipt.headerHtml) ? window.FTReceipt.headerHtml('Order Receipt') : ''}
                         <div class="order-info">
                             <div><span>Sale Number:</span><span><strong>${saleNumber}</strong></span></div>
                             <div><span>Date:</span><span>${formattedDateTime}</span></div>

@@ -19,6 +19,8 @@ use App\Http\Controllers\UserActivityController;
 use App\Http\Controllers\AiInsightsController;
 use App\Http\Controllers\HealthCheckController;
 use App\Http\Controllers\BranchController;
+use App\Http\Controllers\BranchShareController;
+use App\Http\Controllers\ProfitLossReportController;
 use App\Http\Controllers\SyncController;
 use Illuminate\Support\Facades\Route;
 
@@ -109,8 +111,20 @@ Route::middleware('auth')->group(function () {
     });
     Route::resource('orders', OrderController::class);
 
+    // Share (monthly profit split by investment)
+    Route::prefix('shares')->name('shares.')->group(function () {
+        Route::get('/', [BranchShareController::class, 'index'])->name('index');
+        Route::get('/{share}', [BranchShareController::class, 'show'])->name('show');
+        Route::post('/{share}/close', [BranchShareController::class, 'close'])->name('close');
+        Route::post('/{share}/investments', [BranchShareController::class, 'storeInvestment'])->name('investments.store');
+        Route::put('/{share}/investments/{investment}', [BranchShareController::class, 'updateInvestment'])->name('investments.update');
+        Route::delete('/{share}/investments/{investment}', [BranchShareController::class, 'destroyInvestment'])->name('investments.destroy');
+    });
+
     // Reports routes
     Route::prefix('reports')->name('reports.')->group(function () {
+        Route::get('/', [ProfitLossReportController::class, 'index'])->name('index');
+        Route::get('/profit-loss', [ProfitLossReportController::class, 'index'])->name('profit-loss');
         Route::get('/sales-report', [SalesReportController::class, 'index'])->name('sales-report');
         Route::get('/invoice-report', [InvoiceReportController::class, 'index'])->name('invoice-report');
     });
@@ -131,6 +145,11 @@ Route::middleware('auth')->group(function () {
 
     // System routes
     Route::get('health-check', [HealthCheckController::class, 'index'])->name('health-check.index');
+
+    // Current-branch receipt settings (any authenticated user: branch member or admin)
+    Route::get('branches/receipt-settings', [BranchController::class, 'receiptSettings'])->name('branches.receipt-settings.show');
+    Route::get('branches/receipt-settings/edit', [BranchController::class, 'editReceiptSettings'])->name('branches.receipt-settings.edit');
+    Route::put('branches/receipt-settings', [BranchController::class, 'updateReceiptSettings'])->name('branches.receipt-settings.update');
 
     // Branches (admin only)
     Route::middleware('admin')->group(function () {

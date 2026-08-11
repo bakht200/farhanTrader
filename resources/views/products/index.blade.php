@@ -72,51 +72,50 @@
     </div>
 
     <!-- Products Table -->
-    <div class="bg-white rounded-lg shadow-sm overflow-hidden">
+    <div class="bg-white rounded-lg shadow-sm overflow-hidden -mx-2 sm:mx-0">
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th class="px-6 py-3 text-left">
+                        <th class="px-2 sm:px-3 py-3 text-left w-8">
                             <input type="checkbox" class="rounded border-gray-300 text-orange-600 focus:ring-orange-500" id="select-all">
                         </th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SNO</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created By</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">SNO</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product Name</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     @forelse($products as $product)
                     <tr class="hover:bg-gray-50">
-                        <td class="px-6 py-4 whitespace-nowrap">
+                        <td class="px-2 sm:px-3 py-3">
                             <input type="checkbox" class="product-checkbox rounded border-gray-300 text-orange-600 focus:ring-orange-500" value="{{ $product->id }}">
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
                             <span class="text-sm font-medium text-gray-900">{{ ($products->currentPage() - 1) * $products->perPage() + $loop->iteration }}</span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="flex items-center">
-                                <div class="w-10 h-10 bg-gray-200 rounded flex items-center justify-center mr-3 flex-shrink-0">
+                        <td class="px-2 sm:px-3 py-3">
+                            <div class="flex items-center min-w-0">
+                                <div class="w-8 h-8 bg-gray-200 rounded flex items-center justify-center mr-2 flex-shrink-0">
                                     @if($product->image)
                                         <img src="{{ asset('storage/' . $product->image) }}" alt="{{ $product->name }}" class="w-full h-full object-cover rounded">
                                     @else
-                                        <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                                         </svg>
                                     @endif
                                 </div>
-                                <span class="text-sm font-medium text-gray-900">{{ $product->name }}</span>
+                                <span class="text-sm font-medium text-gray-900 break-words">{{ $product->name }}</span>
                             </div>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <span class="text-sm text-gray-900">{{ $product->category->name ?? 'N/A' }}</span>
+                        <td class="px-2 sm:px-3 py-3">
+                            <span class="text-sm text-gray-900 break-words">{{ $product->category->name ?? 'N/A' }}</span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
                             <span class="text-sm font-medium text-gray-900">PKR {{ number_format($product->selling_price, 2) }}</span>
                         </td>
                         @php
@@ -152,10 +151,10 @@
                             $stockUnits = $stockUnits->unique('id')->values();
                             $defaultUnit = $stockUnits->firstWhere('id', (int) $baseUnitId) ?? $stockUnits->first();
                         @endphp
-                        <td class="px-6 py-4 whitespace-nowrap">
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
                             <span class="text-sm text-gray-900">{{ $defaultUnit['name'] ?? ($product->unit->short_name ?? 'N/A') }}</span>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
                             <button type="button"
                                     class="js-stock-toggle text-sm text-gray-900 text-left"
                                     data-product-id="{{ $product->id }}"
@@ -170,24 +169,8 @@
                             @endif
                             <script type="application/json" id="product-stock-units-{{ $product->id }}">@json($stockUnits)</script>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap">
-                            <div class="flex items-center">
-                                <div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center mr-2">
-                                    @if($product->createdBy)
-                                        <span class="text-xs font-medium text-gray-700">
-                                            {{ strtoupper(substr($product->createdBy->name, 0, 2)) }}
-                                        </span>
-                                    @else
-                                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                                        </svg>
-                                    @endif
-                                </div>
-                                <span class="text-sm text-gray-900">{{ $product->createdBy->name ?? 'System' }}</span>
-                            </div>
-                        </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                            <div class="flex items-center space-x-3">
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap text-sm font-medium">
+                            <div class="flex items-center space-x-2">
                                 <a href="{{ route('products.show', $product) }}" class="text-blue-600 hover:text-blue-900" title="View">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -213,7 +196,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="9" class="px-6 py-4 text-center text-gray-500">
+                        <td colspan="8" class="px-3 py-4 text-center text-gray-500">
                             No products found.
                         </td>
                     </tr>
@@ -223,7 +206,7 @@
         </div>
 
         <!-- Pagination -->
-        <div class="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+        <div class="px-3 sm:px-4 py-4 border-t border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div class="flex items-center">
                 <span class="text-sm text-gray-700">Row Per Page</span>
                 <form method="GET" action="{{ route('products.index') }}" class="ml-2">

@@ -69,6 +69,7 @@
                 </svg>
                 <span>Dashboard</span>
             </a>
+            <x-quantity-alerts-bell variant="dark" />
             <button onclick="openCalendar()" class="p-2 hover:bg-gray-700 rounded" title="Calendar">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
@@ -530,8 +531,48 @@
             const maxSelected = await getMaxQuantityInSelectedUnit(item);
             return {
                 allowed: requestedInBase <= stockInBase + 0.000001,
-                maxSelected
+                maxSelected,
+                stockInBase,
+                requestedInBase
             };
+        }
+
+        /**
+         * Find non-custom cart lines that exceed available stock.
+         * Used to block Place Order while still allowing add-to-cart after confirm.
+         */
+        async function getCartStockProblems() {
+            const problems = [];
+            for (const item of cart) {
+                const isCustom = item.product_id === null || item.is_custom === true;
+                if (isCustom) continue;
+                const validation = await isQuantityWithinStock(item, item.quantity);
+                if (!validation.allowed) {
+                    problems.push({
+                        name: item.name || 'Product',
+                        requested: parseFloat(item.quantity) || 0,
+                        available: parseFloat(validation.maxSelected || 0),
+                        unit: item.unit_name || '',
+                    });
+                }
+            }
+            return problems;
+        }
+
+        async function assertCartHasStockForCheckout() {
+            const problems = await getCartStockProblems();
+            if (problems.length === 0) return true;
+
+            const details = problems.map(p =>
+                `• ${p.name}: need ${p.requested.toFixed(2)} ${p.unit}, stock ${p.available.toFixed(2)} ${p.unit}`
+            ).join('\n');
+
+            alert(
+                'Cannot place order. One or more products are out of stock or exceed available quantity.\n\n' +
+                details +
+                '\n\nYou can keep them in the cart, but place order is blocked until stock is enough.'
+            );
+            return false;
         }
 
         async function handleQuantityInputChange(index, input) {
@@ -548,9 +589,14 @@
 
             const validation = await isQuantityWithinStock(item, val);
             if (!validation.allowed) {
-                alert(`Cannot exceed stock quantity of ${parseFloat(validation.maxSelected || 0).toFixed(2)}`);
-                input.value = parseFloat(item.quantity || 0).toFixed(2);
-                return;
+                const ok = confirm(
+                    `"${item.name}" exceeds stock (${parseFloat(validation.maxSelected || 0).toFixed(2)} available).\n\n` +
+                    'Click OK to keep this quantity in cart. Place order will stay blocked until stock is enough.'
+                );
+                if (!ok) {
+                    input.value = parseFloat(item.quantity || 0).toFixed(2);
+                    return;
+                }
             }
 
             item.quantity = parseFloat(val.toFixed(2));
@@ -862,10 +908,15 @@
             
             console.log('Adding product to cart:', product.name, 'ID:', product.id);
 
-            // Check stock availability
+            // Out of stock: allow add after OK, but place order remains blocked
             if (product.stock_quantity <= 0) {
-                alert('Product is out of stock!');
-                return;
+                const ok = confirm(
+                    `"${product.name}" is out of stock.\n\n` +
+                    'Click OK to add it to the cart anyway. Place order will stay blocked until stock is available.'
+                );
+                if (!ok) {
+                    return;
+                }
             }
 
             // Determine initial selling price based on selling_type (branch-resolved product rates)
@@ -883,8 +934,13 @@
                 const newQuantity = parseFloat((existingItem.quantity + 1).toFixed(2));
                 const validation = await isQuantityWithinStock(existingItem, newQuantity);
                 if (!validation.allowed) {
-                    alert(`Cannot add more. Only ${parseFloat(validation.maxSelected || 0).toFixed(2)} items available in stock.`);
-                    return;
+                    const ok = confirm(
+                        `Only ${parseFloat(validation.maxSelected || 0).toFixed(2)} available in stock for "${existingItem.name}".\n\n` +
+                        'Click OK to add more to the cart anyway. Place order will stay blocked until stock is enough.'
+                    );
+                    if (!ok) {
+                        return;
+                    }
                 }
                 existingItem.quantity = newQuantity;
             } else {
@@ -941,7 +997,15 @@
                     item.quantity = newQuantity;
                     renderCart();
                 } else {
-                    alert(`Cannot exceed stock quantity of ${parseFloat(validation.maxSelected || 0).toFixed(2)}`);
+                    const ok = confirm(
+                        `"${item.name}" exceeds stock (${parseFloat(validation.maxSelected || 0).toFixed(2)} available).\n\n` +
+                        'Click OK to keep this quantity in cart. Place order will stay blocked until stock is enough.'
+                    );
+                    if (!ok) {
+                        return;
+                    }
+                    item.quantity = newQuantity;
+                    renderCart();
                 }
             }
         }
@@ -1557,9 +1621,13 @@
         let lastOrderData = null;
 
         // Place order - show payment popup first
-        function placeOrder() {
+        async function placeOrder() {
             if (cart.length === 0) {
                 alert('Please add products to cart');
+                return;
+            }
+
+            if (!await assertCartHasStockForCheckout()) {
                 return;
             }
             
@@ -1646,9 +1714,13 @@
         }
 
         // Confirm payment and place order
-        function confirmPayment() {
+        async function confirmPayment() {
             const paidAmountInput = document.getElementById('paid-amount-input');
             if (!paidAmountInput) return;
+
+            if (!await assertCartHasStockForCheckout()) {
+                return;
+            }
             
             const grandTotal = calculateGrandTotal();
             const paidAmount = parseFloat(paidAmountInput.value) || 0;
@@ -1670,6 +1742,17 @@
             if (remainingBalance > 0 && !customerId) {
                 alert('Remaining balance is not zero. Please select a customer. Walk-in customer is only allowed when the order is fully paid.');
                 return;
+            }
+
+            if (window.FTReceipt && typeof window.FTReceipt.requireConfigured === 'function') {
+                try {
+                    await window.FTReceipt.requireConfigured({
+                        description: 'Receipt details are required for this branch before confirming payment. You can also change these anytime from <strong>Receipt Settings</strong> in the menu.',
+                        saveLabel: 'Save & Continue',
+                    });
+                } catch (e) {
+                    return;
+                }
             }
             
             // Close payment popup
@@ -1796,6 +1879,9 @@
             runPlaceOrder()
             .then(data => {
                 if (data.success) {
+                    if (Array.isArray(data.stock_alerts) && typeof window.handleStockAlerts === 'function') {
+                        window.handleStockAlerts(data.stock_alerts);
+                    }
                     if (data.offline) {
                         const cartTotal = typeof calculateTotal === 'function' ? calculateTotal() : 0;
                         const previousBalance = typeof customerPreviousBalance !== 'undefined' ? (customerPreviousBalance ?? 0) : 0;
@@ -4762,6 +4848,9 @@
             </div>
         </div>
     </div>
+
+    @include('components.receipt-branding')
+    @include('components.stock-alert-notify')
 </body>
 </html>
 

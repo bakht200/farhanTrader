@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ |--------------------------------------------------------------------------
+ | Compact data tables (reduce horizontal scroll on smaller screens)
+ |--------------------------------------------------------------------------
+ */
+main table th,
+main table td {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+}
+
+@media (min-width: 640px) {
+    main table th,
+    main table td {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }
+}
+
+main .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+}
+
+main table {
+    width: 100%;
+}

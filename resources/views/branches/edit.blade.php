@@ -59,6 +59,74 @@
                 </div>
             </div>
 
+            <div class="mt-8 pt-6 border-t border-gray-200">
+                <h4 class="text-sm font-semibold text-gray-800 mb-1">Receipt / Print Header</h4>
+                <p class="text-xs text-gray-500 mb-4">Shown on this branch’s POS and order receipts. If empty, users will be asked to set it on first print.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <label for="receipt_title" class="block text-sm font-medium text-gray-700 mb-2">Title <span class="text-gray-400 font-normal">(required for print)</span></label>
+                        <input type="text" id="receipt_title" name="receipt_title" value="{{ old('receipt_title', $branch->receipt_title) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                               placeholder="e.g. FARHAN TRADERS">
+                        @error('receipt_title')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="receipt_subtitle" class="block text-sm font-medium text-gray-700 mb-2">Subtitle</label>
+                        <input type="text" id="receipt_subtitle" name="receipt_subtitle" value="{{ old('receipt_subtitle', $branch->receipt_subtitle) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                               placeholder="e.g. Deals In Food Chemicals / Non Food Chemicals">
+                        @error('receipt_subtitle')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="receipt_phone" class="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+                        <input type="text" id="receipt_phone" name="receipt_phone" value="{{ old('receipt_phone', $branch->receipt_phone) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                               placeholder="Landline">
+                        @error('receipt_phone')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="receipt_email" class="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <input type="email" id="receipt_email" name="receipt_email" value="{{ old('receipt_email', $branch->receipt_email) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                               placeholder="email@example.com">
+                        @error('receipt_email')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="receipt_mobile_1" class="block text-sm font-medium text-gray-700 mb-2">Mobile 1</label>
+                        <input type="text" id="receipt_mobile_1" name="receipt_mobile_1" value="{{ old('receipt_mobile_1', $branch->receipt_mobile_1) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500">
+                        @error('receipt_mobile_1')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="receipt_mobile_2" class="block text-sm font-medium text-gray-700 mb-2">Mobile 2</label>
+                        <input type="text" id="receipt_mobile_2" name="receipt_mobile_2" value="{{ old('receipt_mobile_2', $branch->receipt_mobile_2) }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500">
+                        @error('receipt_mobile_2')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div class="md:col-span-2">
+                        <label for="receipt_address" class="block text-sm font-medium text-gray-700 mb-2">Address</label>
+                        <textarea id="receipt_address" name="receipt_address" rows="2"
+                                  class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                                  placeholder="Branch address for receipts">{{ old('receipt_address', $branch->receipt_address) }}</textarea>
+                        @error('receipt_address')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+            </div>
+
             <div class="mt-6">
                 <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md font-medium">
                     Save Branch

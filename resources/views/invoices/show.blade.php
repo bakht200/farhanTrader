@@ -161,7 +161,15 @@
     </div>
 
     <script>
-        function printInvoice(invoiceId) {
+        async function printInvoice(invoiceId) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+
             fetch(`/sales/invoices/${invoiceId}`, {
                 method: 'GET',
                 headers: {
@@ -174,10 +182,13 @@
                 if (!data.success) {
                     throw new Error(data.message || 'Failed to load invoice data');
                 }
-                
+
                 const invoice = data.invoice;
                 const printWindow = window.open('', '_blank');
-                
+                const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                    ? window.FTReceipt.headerHtml('INVOICE')
+                    : '';
+
                 let printContent = `
                     <!DOCTYPE html>
                     <html>
@@ -262,24 +273,7 @@
                         </style>
                     </head>
                     <body>
-                        <div class="header">
-                            <h1>FARHAN TRADERS</h1>
-                            <div class="business-info">
-                                <div style="font-weight: bold; margin-bottom: 4px;">
-                                    Deals In Food Chemicals / Non Food Chemicals
-                                </div>
-                                <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 7px;">
-                                    <div>
-                                        <div>Ph: 091-2561301</div>
-                                        <div>Mob: 0313-9829984, 0313-6777811</div>
-                                    </div>
-                                    <div>
-                                        <div>Email: farhan.akhtar90@yahoo.com</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <p style="margin-top: 10px; font-weight: bold;">INVOICE</p>
-                        </div>
+                        ${receiptHeader}
                         <div class="invoice-info">
                             <div><span>Invoice Number:</span><span><strong>${invoice.invoice_number || 'INV-' + invoice.id}</strong></span></div>
                             <div><span>Date:</span><span>${invoice.invoice_date || ''}</span></div>

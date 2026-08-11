@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\User;
 use App\Services\BranchStockService;
 use App\Support\CurrentBranch;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -97,16 +98,118 @@ class BranchController extends Controller
                 Rule::unique('branches', 'name')->ignore($branch->id),
             ],
             'is_active' => ['sometimes', 'boolean'],
+            'receipt_title' => ['nullable', 'string', 'max:255'],
+            'receipt_subtitle' => ['nullable', 'string', 'max:255'],
+            'receipt_phone' => ['nullable', 'string', 'max:50'],
+            'receipt_mobile_1' => ['nullable', 'string', 'max:50'],
+            'receipt_mobile_2' => ['nullable', 'string', 'max:50'],
+            'receipt_email' => ['nullable', 'email', 'max:255'],
+            'receipt_address' => ['nullable', 'string', 'max:500'],
         ]);
 
         $branch->update([
             'name' => $validated['name'],
             'is_active' => $request->boolean('is_active', $branch->is_active),
+            'receipt_title' => $validated['receipt_title'] ?? null,
+            'receipt_subtitle' => $validated['receipt_subtitle'] ?? null,
+            'receipt_phone' => $validated['receipt_phone'] ?? null,
+            'receipt_mobile_1' => $validated['receipt_mobile_1'] ?? null,
+            'receipt_mobile_2' => $validated['receipt_mobile_2'] ?? null,
+            'receipt_email' => $validated['receipt_email'] ?? null,
+            'receipt_address' => $validated['receipt_address'] ?? null,
         ]);
 
         return redirect()
             ->route('branches.edit', $branch)
             ->with('success', 'Branch updated successfully.');
+    }
+
+    /**
+     * Current branch receipt branding for print headers / popup.
+     */
+    public function receiptSettings(): JsonResponse
+    {
+        $branch = CurrentBranch::get();
+        if (! $branch) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No active branch.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'branch_id' => $branch->id,
+            'branch_name' => $branch->name,
+            'receipt' => $branch->receiptBrandingPayload(),
+        ]);
+    }
+
+    /**
+     * Page for any branch user (or admin on active branch) to edit receipt header.
+     */
+    public function editReceiptSettings(): View|RedirectResponse
+    {
+        $branch = CurrentBranch::get();
+        if (! $branch) {
+            return redirect()->route('dashboard')->with('error', 'No active branch.');
+        }
+
+        return view('branches.receipt-settings', [
+            'branch' => $branch,
+        ]);
+    }
+
+    /**
+     * Save receipt branding for the current active branch
+     * (print popup JSON, or form submit from Receipt Settings page).
+     */
+    public function updateReceiptSettings(Request $request): JsonResponse|RedirectResponse
+    {
+        $branch = CurrentBranch::get();
+        if (! $branch) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No active branch.',
+                ], 404);
+            }
+
+            return redirect()->route('dashboard')->with('error', 'No active branch.');
+        }
+
+        $validated = $request->validate([
+            'receipt_title' => ['required', 'string', 'max:255'],
+            'receipt_subtitle' => ['nullable', 'string', 'max:255'],
+            'receipt_phone' => ['nullable', 'string', 'max:50'],
+            'receipt_mobile_1' => ['nullable', 'string', 'max:50'],
+            'receipt_mobile_2' => ['nullable', 'string', 'max:50'],
+            'receipt_email' => ['nullable', 'email', 'max:255'],
+            'receipt_address' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $branch->update([
+            'receipt_title' => $validated['receipt_title'],
+            'receipt_subtitle' => $validated['receipt_subtitle'] ?? null,
+            'receipt_phone' => $validated['receipt_phone'] ?? null,
+            'receipt_mobile_1' => $validated['receipt_mobile_1'] ?? null,
+            'receipt_mobile_2' => $validated['receipt_mobile_2'] ?? null,
+            'receipt_email' => $validated['receipt_email'] ?? null,
+            'receipt_address' => $validated['receipt_address'] ?? null,
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Receipt settings saved for this branch.',
+                'branch_id' => $branch->id,
+                'receipt' => $branch->fresh()->receiptBrandingPayload(),
+            ]);
+        }
+
+        return redirect()
+            ->route('branches.receipt-settings.edit')
+            ->with('success', 'Receipt settings saved for '.$branch->name.'.');
     }
 
     public function addUser(Request $request, Branch $branch): RedirectResponse

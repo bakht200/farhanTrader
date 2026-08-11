@@ -408,7 +408,15 @@
             });
         });
 
-        function printAllSuppliersReport() {
+        async function printAllSuppliersReport() {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+
             // Read optional From/To dates from inputs above the button
             const fromDateInput = document.getElementById('supplier-from-date')?.value || '';
             const toDateInput = document.getElementById('supplier-to-date')?.value || '';
@@ -568,30 +576,13 @@
                             </style>
                         </head>
                         <body>
-                            <div class="header">
-                                <h1>FARHAN TRADERS</h1>
-                                <div class="business-info">
-                                    <div class="business-service">
-                                        Deals In Food Chemicals / Non Food Chemicals
-                                    </div>
-                                    <div class="business-contact">
-                                        <div>
-                                            <div>Ph: 091-2561301</div>
-                                            <div>Mob: 0313-9829984, 0313-6777811</div>
-                                        </div>
-                                        <div>
-                                            <div>Email: farhan.akhtar90@yahoo.com</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <p style="margin-top: 10px;">All Suppliers Detailed Report</p>
-                                <p>
-                                    <strong>From Date:</strong> ${fromDate ? new Date(fromDate).toLocaleDateString('en-US') : 'All Time'} 
-                                    &nbsp; | &nbsp;
-                                    <strong>To Date:</strong> ${toDate ? new Date(toDate).toLocaleDateString('en-US') : 'All Time'}
-                                </p>
-                                <p>Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                            </div>
+                            ${(window.FTReceipt && window.FTReceipt.headerHtml) ? window.FTReceipt.headerHtml('All Suppliers Detailed Report') : ''}
+                            <p style="text-align:center;font-size:10px;margin:4px 0 12px;">
+                                <strong>From Date:</strong> ${fromDate ? new Date(fromDate).toLocaleDateString('en-US') : 'All Time'}
+                                &nbsp; | &nbsp;
+                                <strong>To Date:</strong> ${toDate ? new Date(toDate).toLocaleDateString('en-US') : 'All Time'}
+                                <br>Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </p>
                             
                             <!-- Grand Totals Section -->
                             <div style="border: 3px solid #000; padding: 20px; margin-bottom: 30px; background-color: #f9f9f9;">
@@ -757,7 +748,15 @@
             });
         }
 
-        function printSupplierReport(supplierId) {
+        async function printSupplierReport(supplierId) {
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+
             const printWindow = window.open('', '_blank');
             
             // Get CSRF token
@@ -1034,25 +1033,8 @@
                             </style>
                         </head>
                         <body>
-                            <div class="header">
-                                <h1>FARHAN TRADERS</h1>
-                                <div class="business-info">
-                                    <div class="business-service">
-                                        Deals In Food Chemicals / Non Food Chemicals
-                                    </div>
-                                    <div class="business-contact">
-                                        <div class="business-contact-left">
-                                            <div>Ph: 091-2561301</div>
-                                            <div>Mob: 0313-9829984, 0313-6777811</div>
-                                        </div>
-                                        <div class="business-contact-right">
-                                            <div>Email: farhan.akhtar90@yahoo.com</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <p style="margin-top: 10px;">Complete Supplier Report</p>
-                                <p>Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                            </div>
+                            ${(window.FTReceipt && window.FTReceipt.headerHtml) ? window.FTReceipt.headerHtml('Complete Supplier Report') : ''}
+                            <p style="text-align:center;font-size:10px;margin:4px 0 12px;">Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                             
                             <div class="supplier-header">
                                 <div class="supplier-name">${supplier.name}${supplier.company_name ? ' - ' + supplier.company_name : ''}</div>

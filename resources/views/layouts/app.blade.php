@@ -59,7 +59,7 @@
                     class="flex-1 w-full transition-all duration-300 ease-in-out flex flex-col h-screen overflow-hidden"
                 >
                     <!-- Top Navigation -->
-                    <nav class="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
+                    <nav class="bg-white border-b border-gray-200 px-3 sm:px-4 md:px-5 py-3 sm:py-4 flex-shrink-0">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center space-x-4">
                                 <!-- Sidebar Toggle Button - Mobile -->
@@ -106,6 +106,7 @@
                                 </button>
                                 <span id="ftpos-pending-sync" class="hidden rounded-full px-3 py-1 text-xs font-semibold"></span>
                                 @auth
+                                    <x-quantity-alerts-bell />
                                     @if(Auth::user()->isAdmin())
                                         <div class="relative" x-data="{ open: false }">
                                             <button
@@ -196,12 +197,12 @@
                     </nav>
 
                     <!-- Page Content -->
-                    <main class="flex-1 overflow-y-auto p-6">
+                    <main class="flex-1 overflow-y-auto p-2 sm:p-3 md:p-4">
                         {{ $slot }}
                     </main>
 
                     <!-- Footer -->
-                    <footer class="mt-auto py-4 px-6 border-t border-gray-200 bg-white flex-shrink-0">
+                    <footer class="mt-auto py-3 sm:py-4 px-3 sm:px-4 md:px-5 border-t border-gray-200 bg-white flex-shrink-0">
                         <div class="flex flex-col md:flex-row justify-between items-center text-sm text-gray-600 gap-2">
                             <div>2025 © FTPOS. All Right Reserved</div>
                             <div>Design &amp; developed by <a href="https://wa.me/923330915166" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-700 font-medium underline">Bakht Biland</a></div>
@@ -210,5 +211,8 @@
                 </div>
             </div>
         </div>
+
+        @include('components.receipt-branding')
+        @include('components.stock-alert-notify')
     </body>
 </html>

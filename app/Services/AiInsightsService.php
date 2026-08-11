@@ -33,11 +33,27 @@ class AiInsightsService
             ->selectRaw('SUM(COALESCE(branch_product_stocks.stock_quantity, 0) * COALESCE(products.purchase_price, 0)) as total_stock_value')
             ->value('total_stock_value');
 
+        // Same as Supplier page "Total": sum of credit (purchase/bill) transactions for this branch
+        $supplierTotal = (float) DB::table('supplier_transactions')
+            ->where('branch_id', $branchId)
+            ->where('type', 'credit')
+            ->sum('amount');
+
+        $supplierPaid = (float) DB::table('supplier_transactions')
+            ->where('branch_id', $branchId)
+            ->where('type', 'debit')
+            ->sum('amount');
+
+        $supplierRemaining = $supplierTotal - $supplierPaid;
+
         return [
             'total_profit' => max(0, round($totalProfit, 2)),
             'total_lost' => max(0, round($totalLost, 2)),
             'total_stock' => round($totalStock, 2),
             'total_stock_value' => max(0, round($totalStockValue, 2)),
+            'supplier_total' => max(0, round($supplierTotal, 2)),
+            'supplier_paid' => max(0, round($supplierPaid, 2)),
+            'supplier_remaining' => round($supplierRemaining, 2),
         ];
     }
 

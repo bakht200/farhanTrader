@@ -161,21 +161,22 @@ class InvoiceController extends Controller
                             'total' => $itemTotal,
                         ]);
 
-                        // Adjust stock if product changed or quantity changed
-                        if ($oldProductId && $item->product) {
-                            $item->product->incrementStock( $oldQuantity);
-                        }
-                        if ($itemData['product_id'] && $itemData['product_id'] != $oldProductId) {
-                            $newProduct = Product::find($itemData['product_id']);
-                            if ($newProduct) {
-                                $newProduct->decrementStock( $itemData['quantity']);
+                        // Adjust stock for quantity / product change (diff only — do not restore+diff)
+                        if ($oldProductId && (int) $oldProductId === (int) ($itemData['product_id'] ?? 0)) {
+                            $quantityDiff = (float) $oldQuantity - (float) $itemData['quantity'];
+                            if ($quantityDiff > 0.000001) {
+                                $item->product?->incrementStock($quantityDiff);
+                            } elseif ($quantityDiff < -0.000001) {
+                                $item->product?->decrementStock(abs($quantityDiff));
                             }
-                        } elseif ($itemData['product_id'] && $itemData['product_id'] == $oldProductId) {
-                            $quantityDiff = $oldQuantity - $itemData['quantity'];
-                            if ($quantityDiff > 0) {
-                                $item->product->incrementStock( $quantityDiff);
-                            } elseif ($quantityDiff < 0) {
-                                $item->product->decrementStock( abs($quantityDiff));
+                        } else {
+                            if ($oldProductId) {
+                                $oldProduct = Product::find($oldProductId);
+                                $oldProduct?->incrementStock((float) $oldQuantity);
+                            }
+                            if (! empty($itemData['product_id'])) {
+                                $newProduct = Product::find($itemData['product_id']);
+                                $newProduct?->decrementStock((float) $itemData['quantity']);
                             }
                         }
                     }

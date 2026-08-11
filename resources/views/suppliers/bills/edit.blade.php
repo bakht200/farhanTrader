@@ -22,37 +22,36 @@
         </div>
     @endif
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Wallet Summary Card -->
-        <div class="lg:col-span-1">
-            <div class="bg-white rounded-lg shadow-sm p-6">
-                <h3 class="text-lg font-semibold mb-4 text-gray-900">{{ $supplier->name }}</h3>
-                <div class="space-y-4">
-                    <div class="border-b pb-4">
-                        <p class="text-sm text-gray-500 mb-1">Total Paid</p>
-                        <p class="text-2xl font-bold text-green-600">PKR {{ number_format($debitTotal ?? 0, 2) }}</p>
-                    </div>
-                    <div class="border-b pb-4">
-                        <p class="text-sm text-gray-500 mb-1">Total</p>
-                        <p class="text-2xl font-bold text-gray-700">PKR {{ number_format($creditTotal ?? 0, 2) }}</p>
-                    </div>
-                    <div>
-                        <p class="text-sm text-gray-500 mb-1">Remaining</p>
-                        <p class="text-2xl font-bold {{ ($balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600' }}">
-                            PKR {{ number_format($balance ?? 0, 2) }}
-                        </p>
-                    </div>
-                    <div class="pt-4 border-t">
-                        <p class="text-xs text-gray-500 mb-2">Current Bill:</p>
-                        <p class="text-sm font-semibold">#{{ $bill->bill_number ?? $bill->id }}</p>
-                        <p class="text-sm text-gray-600">PKR {{ number_format($bill->bill_amount, 2) }}</p>
-                    </div>
-                </div>
+    <!-- Supplier wallet summary (row) -->
+    <div class="bg-white rounded-lg shadow-sm p-4 mb-6">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">{{ $supplier->name }}</h3>
+            <div class="text-sm text-gray-600">
+                Current bill
+                <span class="font-semibold text-gray-900">#{{ $bill->bill_number ?? $bill->id }}</span>
+                · PKR {{ number_format($bill->bill_amount, 2) }}
             </div>
         </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <p class="text-sm text-gray-500 mb-1">Total Paid</p>
+                <p class="text-2xl font-bold text-green-600">PKR {{ number_format($debitTotal ?? 0, 2) }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <p class="text-sm text-gray-500 mb-1">Total</p>
+                <p class="text-2xl font-bold text-gray-700">PKR {{ number_format($creditTotal ?? 0, 2) }}</p>
+            </div>
+            <div class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <p class="text-sm text-gray-500 mb-1">Remaining</p>
+                <p class="text-2xl font-bold {{ ($balance ?? 0) > 0 ? 'text-red-600' : 'text-green-600' }}">
+                    PKR {{ number_format($balance ?? 0, 2) }}
+                </p>
+            </div>
+        </div>
+    </div>
 
-        <!-- Bill Edit Form -->
-        <div class="lg:col-span-2">
+    <!-- Bill Edit Form -->
+    <div>
             <div class="bg-white rounded-lg shadow-sm p-6">
                 <h3 class="text-lg font-semibold mb-6">Edit Bill</h3>
 
@@ -218,7 +217,6 @@
                     </div>
                 </form>
             </div>
-        </div>
     </div>
 
     <!-- Products Data for JavaScript -->
