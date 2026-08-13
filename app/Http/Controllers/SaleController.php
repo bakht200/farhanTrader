@@ -403,7 +403,7 @@ class SaleController extends Controller
             if ($extraPayment > 0 && $sale->customer_id) {
                 // Create ADJ bill record
                 $adjSale = Sale::create([
-                    'sale_number' => Sale::generateSaleNumber('ADJ'),
+                    'sale_number' => Sale::generateSaleNumber('ADJ', \App\Support\CurrentBranch::id()),
                     'customer_id' => $sale->customer_id,
                     'user_id' => auth()->id(),
                     'sale_date' => now(),

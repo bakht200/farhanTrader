@@ -32,6 +32,17 @@ class Branch extends Model
     }
 
     /**
+     * Two-letter code from branch name for sale numbers (e.g. "Lahori Gate" → "LA").
+     */
+    public function saleNumberCode(): string
+    {
+        $letters = preg_replace('/[^A-Za-z]/', '', (string) $this->name) ?? '';
+        $code = strtoupper(substr($letters, 0, 2));
+
+        return str_pad($code !== '' ? $code : 'BR', 2, 'X');
+    }
+
+    /**
      * @return array{
      *     configured: bool,
      *     title: string,

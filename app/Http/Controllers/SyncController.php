@@ -332,10 +332,11 @@ class SyncController extends Controller
         }
 
         $customerName = trim((string) ($payload['customer_name'] ?? 'Walk-in Customer')) ?: 'Walk-in Customer';
-        $saleNumber = Sale::generateSaleNumber('SALE');
+        $branchId = (int) ($item['branch_id'] ?? CurrentBranch::id($user) ?? CurrentBranch::DEFAULT_BRANCH_ID);
+        $saleNumber = Sale::generateSaleNumber('SALE', $branchId);
 
         $sale = Sale::create([
-            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'branch_id' => $branchId,
             'sale_number' => $saleNumber,
             'customer_id' => $payload['customer_id'] ?? null,
             'user_id' => $user->id,

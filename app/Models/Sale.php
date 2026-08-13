@@ -53,31 +53,54 @@ class Sale extends Model
 
     /**
      * Generate next sequential sale number based on prefix.
-     * Format: PREFIX-000001
      *
-     * Must ignore the branch global scope: sale_number is unique across ALL branches,
-     * so Branch 2 cannot restart at SALE-000001 if Branch 1 already used it.
+     * Admin / default branch (id 1): PREFIX-000001
+     * Other branches: PREFIX-{CODE}000001 (e.g. SALE-LA000001)
+     *   where CODE is the first two letters of the branch name.
+     *
+     * Special prefixes like PB (previous balance) always use the admin style.
      *
      * @param  string  $prefix  Prefix for the sale number (e.g., 'SALE', 'ADJ', 'HOLD', 'PB')
+     * @param  int|null  $branchId  Branch to number for (defaults to current branch)
      */
-    public static function generateSaleNumber(string $prefix = 'SALE'): string
+    public static function generateSaleNumber(string $prefix = 'SALE', ?int $branchId = null): string
+    {
+        $branchId = $branchId
+            ?? \App\Support\CurrentBranch::id()
+            ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+
+        $useBranchFormat = $branchId !== \App\Support\CurrentBranch::DEFAULT_BRANCH_ID
+            && ! in_array($prefix, ['PB'], true);
+
+        if (! $useBranchFormat) {
+            return self::nextAdminStyleSaleNumber($prefix);
+        }
+
+        $branch = Branch::find($branchId);
+        $code = $branch ? $branch->saleNumberCode() : 'BR';
+
+        return self::nextBranchStyleSaleNumber($prefix, $code, $branchId);
+    }
+
+    /**
+     * Admin format: PREFIX-000001 (global sequence for that prefix).
+     */
+    protected static function nextAdminStyleSaleNumber(string $prefix): string
     {
         $query = self::withoutGlobalScopes()
             ->where('sale_number', 'like', $prefix.'-%');
 
-        // Only lock when already inside a DB transaction (POS / sync / payments)
         if (\Illuminate\Support\Facades\DB::transactionLevel() > 0) {
             $query->lockForUpdate();
         }
 
         $sales = $query->pluck('sale_number')->toArray();
-
         $maxNumber = 0;
 
         foreach ($sales as $saleNumber) {
-            // Format: PREFIX-000001 (ignore temp/offline ids like SALE-TMP-...)
+            // PREFIX-000001 only — ignore branch style (SALE-LA000001) and temp ids
             $parts = explode('-', (string) $saleNumber);
-            if (count($parts) === 2 && is_numeric($parts[1])) {
+            if (count($parts) === 2 && ctype_digit($parts[1])) {
                 $number = (int) $parts[1];
                 if ($number > $maxNumber) {
                     $maxNumber = $number;
@@ -85,9 +108,49 @@ class Sale extends Model
             }
         }
 
-        $nextNumber = $maxNumber + 1;
+        return $prefix.'-'.str_pad((string) ($maxNumber + 1), 6, '0', STR_PAD_LEFT);
+    }
 
-        return $prefix.'-'.str_pad((string) $nextNumber, 6, '0', STR_PAD_LEFT);
+    /**
+     * Branch format: PREFIX-LA000001 — sequence starts at 1 per branch + prefix.
+     */
+    protected static function nextBranchStyleSaleNumber(string $prefix, string $code, int $branchId): string
+    {
+        $patternPrefix = $prefix.'-'.$code;
+
+        $query = self::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->where('sale_number', 'like', $patternPrefix.'%');
+
+        if (\Illuminate\Support\Facades\DB::transactionLevel() > 0) {
+            $query->lockForUpdate();
+        }
+
+        $sales = $query->pluck('sale_number')->toArray();
+        $maxNumber = 0;
+        $codeLen = strlen($code);
+
+        foreach ($sales as $saleNumber) {
+            $parts = explode('-', (string) $saleNumber, 2);
+            if (count($parts) !== 2) {
+                continue;
+            }
+
+            $suffix = $parts[1];
+            if (! str_starts_with($suffix, $code)) {
+                continue;
+            }
+
+            $numeric = substr($suffix, $codeLen);
+            if ($numeric !== '' && ctype_digit($numeric)) {
+                $number = (int) $numeric;
+                if ($number > $maxNumber) {
+                    $maxNumber = $number;
+                }
+            }
+        }
+
+        return $patternPrefix.str_pad((string) ($maxNumber + 1), 6, '0', STR_PAD_LEFT);
     }
 
     /**

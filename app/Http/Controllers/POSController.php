@@ -325,7 +325,7 @@ class POSController extends Controller
             } else {
                 // Create new sale
                 $sale = Sale::create([
-                    'sale_number' => Sale::generateSaleNumber('SALE'),
+                    'sale_number' => Sale::generateSaleNumber('SALE', \App\Support\CurrentBranch::id()),
                     'customer_id' => $validated['customer_id'] ?? null,
                     'payment_method' => $validated['payment_method'] ?? 'cash',
                     'user_id' => auth()->id(),
@@ -464,7 +464,7 @@ class POSController extends Controller
         if ($extraPayment > 0 && !empty($validated['customer_id'])) {
             // Create ADJ bill record
             $adjSale = Sale::create([
-                'sale_number' => Sale::generateSaleNumber('ADJ'),
+                'sale_number' => Sale::generateSaleNumber('ADJ', \App\Support\CurrentBranch::id()),
                 'customer_id' => $validated['customer_id'],
                 'user_id' => auth()->id(),
                 'sale_date' => now(),
@@ -693,7 +693,7 @@ class POSController extends Controller
             try {
                 // Try to create with on_hold status
                 $sale = Sale::create([
-                    'sale_number' => Sale::generateSaleNumber('HOLD'),
+                    'sale_number' => Sale::generateSaleNumber('HOLD', \App\Support\CurrentBranch::id()),
                     'customer_id' => $validated['customer_id'] ?? null,
                     'user_id' => auth()->id(),
                     'sale_date' => now(),
@@ -709,7 +709,7 @@ class POSController extends Controller
                 // If on_hold fails (enum doesn't support it), use 'draft' as fallback
                 $status = 'draft';
                 $sale = Sale::create([
-                    'sale_number' => Sale::generateSaleNumber('HOLD'),
+                    'sale_number' => Sale::generateSaleNumber('HOLD', \App\Support\CurrentBranch::id()),
                     'customer_id' => $validated['customer_id'] ?? null,
                     'user_id' => auth()->id(),
                     'sale_date' => now(),
