@@ -25,7 +25,7 @@
         }
     </style>
 </head>
-<body class="font-sans antialiased bg-gray-100 overflow-hidden">
+<body class="font-sans antialiased bg-gray-100 overflow-hidden" data-ft-branch-id="{{ \App\Support\CurrentBranch::id() ?? '' }}">
     <!-- Top Header Bar -->
     <div class="bg-gray-800 text-white px-6 py-3 flex items-center justify-between">
         <div class="flex items-center space-x-4">
@@ -2106,13 +2106,37 @@
             
             const orderData = lastOrderData;
             
-            // Generate bill HTML
+            const branding = (window.FTReceipt && window.FTReceipt.getBranding)
+                ? window.FTReceipt.getBranding()
+                : {};
+            const esc = (s) => String(s ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+            const title = esc((branding.title && String(branding.title).trim()) || 'Receipt');
+            const subtitle = esc(branding.subtitle || '');
+            const address = esc(branding.address || '');
+            const phone = String(branding.phone || '').trim();
+            const mobile1 = String(branding.mobile1 || '').trim();
+            const mobile2 = String(branding.mobile2 || '').trim();
+            const email = String(branding.email || '').trim();
+            const contactBits = [];
+            if (phone) contactBits.push('Ph: ' + esc(phone));
+            if (mobile1) contactBits.push('Mob: ' + esc(mobile1));
+            if (mobile2) contactBits.push('Mob: ' + esc(mobile2));
+            if (email) contactBits.push(esc(email));
+
+            // Generate bill HTML (branch receipt settings)
             let billHTML = `
                 <div class="bg-white p-6 rounded-lg max-w-md mx-auto">
                     <!-- Header -->
                     <div class="text-center border-b-2 border-gray-800 pb-4 mb-4">
-                        <h2 class="text-2xl font-bold text-gray-800">FARHAN TRADERS</h2>
-                        <p class="text-sm text-gray-600 mt-1">Order Receipt</p>
+                        <h2 class="text-2xl font-bold text-gray-800">${title}</h2>
+                        ${subtitle ? `<p class="text-sm text-gray-700 mt-1 font-medium">${subtitle}</p>` : ''}
+                        ${address ? `<p class="text-xs text-gray-500 mt-1">${address}</p>` : ''}
+                        ${contactBits.length ? `<p class="text-xs text-gray-600 mt-2">${contactBits.join(' · ')}</p>` : ''}
+                        <p class="text-sm text-gray-600 mt-2">Order Receipt</p>
                     </div>
                     
                     <!-- Order Info -->
@@ -2232,12 +2256,24 @@
             window.location.reload();
         }
 
-        // Print order receipt
-        function printOrderReceipt() {
+        // Print order receipt (uses current branch receipt settings)
+        async function printOrderReceipt() {
             if (!lastOrderData) {
                 alert('No order data available to print');
                 return;
             }
+
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml('Order Receipt')
+                : '';
             
             const printWindow = window.open('', '_blank');
             const orderData = lastOrderData;
@@ -2344,25 +2380,7 @@
                     </style>
                 </head>
                 <body>
-                    <div class="header">
-                        <h2>FARHAN TRADERS</h2>
-                        <div class="business-info">
-                            <div class="business-service">
-                                Deals In Food Chemicals / Non Food Chemicals
-                            </div>
-                            <div class="business-contact">
-                                <div class="business-contact-left">
-                                        <div>Ph: 091-2561301</div>
-                                        <div>Mob: 0313-9829984</div>
-                                        <div>Mob: 0313-6777811</div>
-                                </div>
-                                <div class="business-contact-right">
-                                    <div>Email: farhan.akhtar90@yahoo.com</div>
-                                </div>
-                            </div>
-                        </div>
-                        <p style="margin-top: 10px;">Order Receipt</p>
-                    </div>
+                    ${receiptHeader}
                     <div class="order-info">
                         <div>
                             <span>Sale Number:</span>
@@ -3409,12 +3427,24 @@
             }
         }
 
-        // Print
-        function printOrder() {
+        // Print (cart preview — uses current branch receipt settings)
+        async function printOrder() {
             if (cart.length === 0) {
                 alert('No items in cart to print');
                 return;
             }
+
+            try {
+                if (window.FTReceipt?.requireConfigured) {
+                    await window.FTReceipt.requireConfigured();
+                }
+            } catch (e) {
+                return;
+            }
+
+            const receiptHeader = (window.FTReceipt && window.FTReceipt.headerHtml)
+                ? window.FTReceipt.headerHtml('Order Receipt')
+                : '';
             
             const printWindow = window.open('', '_blank');
             const orderDate = formatDateTime(new Date().toISOString());
@@ -3470,24 +3500,7 @@
                     </style>
                 </head>
                 <body>
-                    <div class="header">
-                        <h2>FARHAN TRADERS</h2>
-                        <div class="business-info">
-                            <div class="business-service">
-                                Deals In Food Chemicals / Non Food Chemicals
-                            </div>
-                            <div class="business-contact">
-                                <div class="business-contact-left">
-                                    <div>Ph: 091-2561301</div>
-                                    <div>Mob: 0313-9829984, 0313-6777811</div>
-                                </div>
-                                <div class="business-contact-right">
-                                    <div>Email: farhan.akhtar90@yahoo.com</div>
-                                </div>
-                            </div>
-                        </div>
-                        <p style="margin-top: 10px;">Order Receipt</p>
-                    </div>
+                    ${receiptHeader}
                     <div class="order-info">
                         <p><strong>Date:</strong> ${orderDate}</p>
                         <p><strong>Customer:</strong> ${customerName}</p>
@@ -4851,6 +4864,7 @@
 
     @include('components.receipt-branding')
     @include('components.stock-alert-notify')
+    @include('components.branch-switch-script')
 </body>
 </html>
 

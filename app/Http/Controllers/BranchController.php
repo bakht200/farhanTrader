@@ -282,8 +282,14 @@ class BranchController extends Controller
 
         CurrentBranch::setActive($branch->id);
 
+        // Always land on dashboard so lists/POS/offline cache aren't left on the previous
+        // branch's page. Other open tabs are notified via branch_switched flash + JS.
         return redirect()
-            ->back()
-            ->with('success', "Switched to branch: {$branch->name}");
+            ->route('dashboard')
+            ->with('success', "Switched to branch: {$branch->name}")
+            ->with('branch_switched', [
+                'id' => (int) $branch->id,
+                'name' => $branch->name,
+            ]);
     }
 }

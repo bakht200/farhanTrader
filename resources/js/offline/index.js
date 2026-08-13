@@ -10,9 +10,9 @@ import {
     listVaultEmails,
 } from './authVault';
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier } from './outbox';
-import { db, getMeta, pendingOutboxCount } from './db';
-import { onBroadcast } from './broadcast';
-import { prefetchAppShells } from './prefetch';
+import { db, getMeta, setMeta, pendingOutboxCount } from './db';
+import { onBroadcast, broadcast } from './broadcast';
+import { prefetchAppShells, CACHE_NAME } from './prefetch';
 
 const PASSWORD_STASH_KEY = 'ftpos_enroll_password';
 
@@ -164,6 +164,52 @@ function exposeApi() {
     };
 }
 
+async function clearPageCaches() {
+    if (!('caches' in window)) {
+        return;
+    }
+    try {
+        await caches.delete(CACHE_NAME);
+        const keys = await caches.keys();
+        await Promise.all(
+            keys.filter((k) => k.startsWith('ftpos-')).map((k) => caches.delete(k))
+        );
+    } catch (e) {
+        console.warn('[offline] clear page caches failed', e);
+    }
+}
+
+/**
+ * When admin switches branch, server sets window.__ftBranchSwitched.
+ * Refresh IndexedDB for the new branch and tell other tabs to reload.
+ */
+async function applyBranchSwitchFromPage() {
+    const payload = window.__ftBranchSwitched;
+    if (!payload || !payload.id) {
+        return;
+    }
+
+    // Avoid re-broadcast loops in the same document
+    window.__ftBranchSwitched = null;
+
+    try {
+        await setMeta('active_branch_id', payload.id);
+        await clearPageCaches();
+        if (isOnline()) {
+            await bootstrap().catch(() => {});
+            // Rebuild shells for the new branch context
+            warmOfflineShells();
+        }
+    } catch (e) {
+        console.warn('[offline] branch switch refresh failed', e);
+    }
+
+    broadcast('branch-changed', {
+        id: Number(payload.id),
+        name: payload.name || '',
+    });
+}
+
 export async function bootOfflineRuntime() {
     exposeApi();
     await registerServiceWorker();
@@ -212,7 +258,26 @@ export async function bootOfflineRuntime() {
         if (msg?.type === 'auth-required') {
             showToast('Session expired — log in online to sync pending changes');
         }
+        if (msg?.type === 'branch-changed') {
+            const switchedId = Number(msg.payload?.id || 0);
+            const currentId = Number(document.body?.dataset?.ftBranchId || 0);
+            // Same branch already showing — no need to bounce
+            if (currentId && switchedId && currentId === switchedId) {
+                return;
+            }
+            clearPageCaches()
+                .catch(() => {})
+                .finally(() => {
+                    if (!window.location.pathname.startsWith('/dashboard')) {
+                        window.location.href = '/dashboard';
+                    } else {
+                        window.location.reload();
+                    }
+                });
+        }
     });
+
+    await applyBranchSwitchFromPage();
 
     // Online-only modules — Wi‑Fi badges only when offline
     function syncOnlineOnlyBadges(online = isOnline()) {

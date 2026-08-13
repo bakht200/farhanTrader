@@ -17,7 +17,7 @@
         <!-- Scripts -->
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
-    <body class="font-sans antialiased" id="ftpos-app-shell" x-data="{
+    <body class="font-sans antialiased" id="ftpos-app-shell" data-ft-branch-id="{{ $currentBranchId ?? '' }}" x-data="{
         sidebarOpen: (() => {
             let savedState = localStorage.getItem('sidebarOpen');
             if (savedState !== null) {
@@ -214,5 +214,6 @@
 
         @include('components.receipt-branding')
         @include('components.stock-alert-notify')
+        @include('components.branch-switch-script')
     </body>
 </html>
