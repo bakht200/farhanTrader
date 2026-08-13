@@ -11,7 +11,7 @@ import {
 } from './authVault';
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier } from './outbox';
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
-import { onBroadcast, broadcast } from './broadcast';
+import { onBroadcast } from './broadcast';
 import { prefetchAppShells, CACHE_NAME } from './prefetch';
 
 const PASSWORD_STASH_KEY = 'ftpos_enroll_password';
@@ -180,8 +180,8 @@ async function clearPageCaches() {
 }
 
 /**
- * When admin switches branch, server sets window.__ftBranchSwitched.
- * Refresh IndexedDB for the new branch and tell other tabs to reload.
+ * When admin switches branch, server sets window.__ftBranchSwitched (inline script
+ * already notified other tabs). Here we refresh IndexedDB for the new branch.
  */
 async function applyBranchSwitchFromPage() {
     const payload = window.__ftBranchSwitched;
@@ -189,25 +189,16 @@ async function applyBranchSwitchFromPage() {
         return;
     }
 
-    // Avoid re-broadcast loops in the same document
-    window.__ftBranchSwitched = null;
-
     try {
         await setMeta('active_branch_id', payload.id);
         await clearPageCaches();
         if (isOnline()) {
             await bootstrap().catch(() => {});
-            // Rebuild shells for the new branch context
             warmOfflineShells();
         }
     } catch (e) {
         console.warn('[offline] branch switch refresh failed', e);
     }
-
-    broadcast('branch-changed', {
-        id: Number(payload.id),
-        name: payload.name || '',
-    });
 }
 
 export async function bootOfflineRuntime() {
@@ -258,23 +249,8 @@ export async function bootOfflineRuntime() {
         if (msg?.type === 'auth-required') {
             showToast('Session expired — log in online to sync pending changes');
         }
-        if (msg?.type === 'branch-changed') {
-            const switchedId = Number(msg.payload?.id || 0);
-            const currentId = Number(document.body?.dataset?.ftBranchId || 0);
-            // Same branch already showing — no need to bounce
-            if (currentId && switchedId && currentId === switchedId) {
-                return;
-            }
-            clearPageCaches()
-                .catch(() => {})
-                .finally(() => {
-                    if (!window.location.pathname.startsWith('/dashboard')) {
-                        window.location.href = '/dashboard';
-                    } else {
-                        window.location.reload();
-                    }
-                });
-        }
+        // branch-changed is handled by inline layout script so other tabs
+        // refresh even if this Vite bundle is cached/stale.
     });
 
     await applyBranchSwitchFromPage();

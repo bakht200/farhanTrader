@@ -272,6 +272,8 @@ class BranchController extends Controller
 
     public function switch(Request $request): RedirectResponse
     {
+        abort_unless($request->user()?->isAdmin(), 403);
+
         $validated = $request->validate([
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
         ]);
@@ -280,16 +282,25 @@ class BranchController extends Controller
             ->where('is_active', true)
             ->firstOrFail();
 
-        CurrentBranch::setActive($branch->id);
+        // Persist immediately so the following dashboard request cannot race an unsaved session.
+        session([
+            'active_branch_id' => (int) $branch->id,
+        ]);
+        session()->save();
 
-        // Always land on dashboard so lists/POS/offline cache aren't left on the previous
-        // branch's page. Other open tabs are notified via branch_switched flash + JS.
+        CurrentBranch::setActive((int) $branch->id);
+
         return redirect()
-            ->route('dashboard')
+            ->route('dashboard', [
+                'branch_switched' => 1,
+                '_ts' => now()->timestamp,
+            ])
             ->with('success', "Switched to branch: {$branch->name}")
             ->with('branch_switched', [
                 'id' => (int) $branch->id,
                 'name' => $branch->name,
-            ]);
+            ])
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate')
+            ->header('Pragma', 'no-cache');
     }
 }
