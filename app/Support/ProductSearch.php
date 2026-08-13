@@ -16,6 +16,22 @@ class ProductSearch
     }
 
     /**
+     * SQL expression that strips common punctuation so searches like
+     * "STRAWBERRY SYRUP (MOCCA)" match "STRAWBERRY SYRUP MOCCA (1*12)".
+     * Uses nested REPLACE for broad MySQL/MariaDB compatibility (no REGEXP_REPLACE).
+     */
+    public static function sqlNormalizedColumn(string $column): string
+    {
+        $expr = "LOWER(COALESCE({$column}, ''))";
+        foreach (['(', ')', '-', '/', '*', '.', ',', '_', '[', ']', '{', '}', '+', '#', "'", '"'] as $char) {
+            $escaped = str_replace("'", "''", $char);
+            $expr = "REPLACE({$expr}, '{$escaped}', ' ')";
+        }
+
+        return "TRIM(REPLACE(REPLACE(REPLACE({$expr}, '  ', ' '), '  ', ' '), '  ', ' '))";
+    }
+
+    /**
      * Apply name/sku/brand search that also matches without parentheses, e.g.
      * "STRAWBERRY SYRUP (MOCCA)" finds "STRAWBERRY SYRUP MOCCA (1*12)".
      *
@@ -43,14 +59,10 @@ class ProductSearch
                 ->orWhere($brand, 'like', $like);
 
             if ($normalizedLike) {
-                // Strip non-alphanumerics in SQL so punctuation differences still match
-                $q->orWhereRaw(
-                    "LOWER(REGEXP_REPLACE(COALESCE({$name}, ''), '[^a-zA-Z0-9]+', ' ')) LIKE ?",
-                    [$normalizedLike]
-                )->orWhereRaw(
-                    "LOWER(REGEXP_REPLACE(COALESCE({$sku}, ''), '[^a-zA-Z0-9]+', ' ')) LIKE ?",
-                    [$normalizedLike]
-                );
+                $normName = self::sqlNormalizedColumn($name);
+                $normSku = self::sqlNormalizedColumn($sku);
+                $q->orWhereRaw("{$normName} LIKE ?", [$normalizedLike])
+                    ->orWhereRaw("{$normSku} LIKE ?", [$normalizedLike]);
             }
         });
     }
