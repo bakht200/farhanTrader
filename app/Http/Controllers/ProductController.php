@@ -36,12 +36,7 @@ class ProductController extends Controller
 
         // Search functionality
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('sku', 'like', "%{$search}%")
-                  ->orWhere('brand', 'like', "%{$search}%");
-            });
+            \App\Support\ProductSearch::apply($query, (string) $request->search);
         }
 
         // Category filter
@@ -1072,12 +1067,7 @@ class ProductController extends Controller
 
         // Search functionality
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('products.name', 'like', "%{$search}%")
-                  ->orWhere('products.sku', 'like', "%{$search}%")
-                  ->orWhere('products.brand', 'like', "%{$search}%");
-            });
+            \App\Support\ProductSearch::apply($query, (string) $request->search, 'products.');
         }
 
         // Brand filter
@@ -1129,12 +1119,7 @@ class ProductController extends Controller
 
         // Search functionality
         if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('sku', 'like', "%{$search}%")
-                  ->orWhere('brand', 'like', "%{$search}%");
-            });
+            \App\Support\ProductSearch::apply($query, (string) $request->search);
         }
 
         $products = $query->orderBy('name')->get()->map(function($p) {

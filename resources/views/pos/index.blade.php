@@ -603,6 +603,35 @@
             renderCart();
         }
 
+        // Normalize search text so "STRAWBERRY SYRUP (MOCCA)" matches "STRAWBERRY SYRUP MOCCA (1*12)"
+        function normalizeProductSearchText(value) {
+            return String(value || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function productMatchesSearch(productOrName, productSku, rawQuery) {
+            const query = String(rawQuery || '').toLowerCase().trim();
+            if (!query) {
+                return true;
+            }
+            const name = typeof productOrName === 'object'
+                ? String(productOrName?.name || '')
+                : String(productOrName || '');
+            const sku = typeof productOrName === 'object'
+                ? String(productOrName?.sku || '')
+                : String(productSku || '');
+            const nQuery = normalizeProductSearchText(query);
+            const nName = normalizeProductSearchText(name);
+            const nSku = normalizeProductSearchText(sku);
+            return name.toLowerCase().includes(query)
+                || sku.toLowerCase().includes(query)
+                || (nQuery && nName.includes(nQuery))
+                || (nQuery && nSku.includes(nQuery));
+        }
+
         // Product Search Functions for Right Panel (defined early for inline handlers)
         function searchProductsRight(query) {
             const searchTerm = (query || '').toLowerCase().trim();
@@ -616,10 +645,7 @@
             }
             
             // Filter products based on search term
-            const filtered = products.filter(product => 
-                (product.name && product.name.toLowerCase().includes(searchTerm)) ||
-                (product.sku && product.sku.toLowerCase().includes(searchTerm))
-            );
+            const filtered = products.filter(product => productMatchesSearch(product, null, searchTerm));
             
             if (filtered.length > 0) {
                 filtered.slice(0, 10).forEach(product => {
@@ -848,9 +874,11 @@
                 const matchesCategory = categoryId === 'all' || cardCategoryId === categoryId.toString();
                 
                 // Check if matches search term
-                const matchesSearch = !searchTerm || 
-                    productName.includes(searchTerm) || 
-                    productSku.includes(searchTerm);
+                const matchesSearch = productMatchesSearch(
+                    card.getAttribute('data-product-name') || '',
+                    card.getAttribute('data-product-sku') || '',
+                    searchTerm
+                );
                 
                 if (matchesCategory && matchesSearch) {
                     card.style.display = '';
@@ -879,9 +907,11 @@
                 const cardCategoryId = card.getAttribute('data-category-id');
                 
                 // Check if matches search term
-                const matchesSearch = !searchTerm || 
-                    productName.includes(searchTerm) || 
-                    productSku.includes(searchTerm);
+                const matchesSearch = productMatchesSearch(
+                    card.getAttribute('data-product-name') || '',
+                    card.getAttribute('data-product-sku') || '',
+                    searchTerm
+                );
                 
                 // Check if matches current category filter
                 const matchesCategory = currentCategoryId === 'all' || cardCategoryId === currentCategoryId.toString();

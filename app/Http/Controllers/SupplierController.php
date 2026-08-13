@@ -771,7 +771,8 @@ class SupplierController extends Controller
                             $quantityToAdd = $productData['quantity'] ?? 0;
                             
                             // Update stock quantity (always add/increment) for current branch
-                            $newStock = $product->incrementStock((float) $quantityToAdd);
+                            $stockBranchId = (int) (\App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID);
+                            $newStock = $product->incrementStock((float) $quantityToAdd, $stockBranchId);
                             
                             // Update purchase price (last added price)
                             $priceUpdated = false;
@@ -1042,27 +1043,41 @@ class SupplierController extends Controller
                 }
 
                 // Apply stock delta once per product: new purchased qty - old purchased qty
+                $billBranchId = (int) ($bill->branch_id ?? \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID);
                 $productIds = array_unique(array_merge(array_keys($oldQtyByProduct), array_keys($newQtyByProduct)));
                 foreach ($productIds as $productId) {
                     $oldQty = (float) ($oldQtyByProduct[$productId] ?? 0);
                     $newQty = (float) ($newQtyByProduct[$productId] ?? 0);
                     $delta = $newQty - $oldQty;
 
-                    if (abs($delta) < 0.000001) {
-                        continue;
-                    }
-
                     $product = Product::find($productId);
                     if (! $product) {
                         continue;
                     }
 
-                    $stockBefore = (float) $product->stock_quantity;
+                    // If this bill never recorded stock history for the product and branch stock
+                    // is still empty while the bill has qty, apply the full purchased qty once.
+                    if (abs($delta) < 0.000001 && $newQty > 0) {
+                        $hasHistory = ProductHistory::query()
+                            ->where('supplier_bill_id', $bill->id)
+                            ->where('product_id', $productId)
+                            ->exists();
+                        $currentStock = app(\App\Services\BranchStockService::class)->get($product, $billBranchId);
+                        if (! $hasHistory && $currentStock < 0.000001) {
+                            $delta = $newQty;
+                        }
+                    }
+
+                    if (abs($delta) < 0.000001) {
+                        continue;
+                    }
+
+                    $stockBefore = app(\App\Services\BranchStockService::class)->get($product, $billBranchId);
 
                     if ($delta > 0) {
-                        $stockAfter = $product->incrementStock($delta);
+                        $stockAfter = $product->incrementStock($delta, $billBranchId);
                     } else {
-                        $stockAfter = $product->decrementStock(abs($delta));
+                        $stockAfter = $product->decrementStock(abs($delta), $billBranchId);
                     }
 
                     ProductHistory::create([
