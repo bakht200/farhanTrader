@@ -318,4 +318,74 @@ class BranchIsolationTest extends TestCase
             'name' => 'Hacked Category',
         ])->assertForbidden();
     }
+
+    public function test_wipe_operational_data_leaves_phandu_intact_and_hides_admin_products(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $this->assertSame('Phandu', $phandu->name);
+
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $peshawar = $this->makeBranch('PESHAWAR CHEMICAL & DISPOSIBLE');
+        $phanduUser = $this->makeBranchUser($phandu);
+        $ashrafUser = $this->makeBranchUser($ashraf);
+
+        $this->makeCustomerForBranch($phandu, ['name' => 'Keep Customer']);
+        $this->makeSupplierForBranch($phandu, ['name' => 'Keep Supplier']);
+        $keepProduct = $this->makeProductForBranch($phandu, ['name' => 'Keep Product'], 10);
+        Sale::factory()->create([
+            'branch_id' => $phandu->id,
+            'user_id' => $phanduUser->id,
+            'sale_number' => 'SALE-KEEP1',
+            'total_amount' => 50,
+        ]);
+
+        $this->makeCustomerForBranch($ashraf, ['name' => 'Wipe Customer']);
+        $this->makeSupplierForBranch($ashraf, ['name' => 'Wipe Supplier']);
+        $this->makeSupplierForBranch($peshawar, ['name' => 'Peshawar Supplier']);
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $keepProduct->id,
+            'stock_quantity' => 4,
+            'selling_type' => 'retail',
+        ]);
+        BranchProductStock::query()->create([
+            'branch_id' => $peshawar->id,
+            'product_id' => $keepProduct->id,
+            'stock_quantity' => 2,
+            'selling_type' => 'retail',
+        ]);
+        Sale::factory()->create([
+            'branch_id' => $ashraf->id,
+            'user_id' => $ashrafUser->id,
+            'sale_number' => 'SALE-WIPE1',
+        ]);
+
+        $this->artisan('branches:wipe-operational', [
+            '--name' => ['ASHRAF ROAD', 'PESHAWAR CHEMICAL'],
+            '--force' => true,
+        ])->assertSuccessful();
+
+        $this->assertDatabaseHas('customers', ['name' => 'Keep Customer', 'branch_id' => 1]);
+        $this->assertDatabaseHas('suppliers', ['name' => 'Keep Supplier', 'branch_id' => 1]);
+        $this->assertDatabaseHas('sales', ['sale_number' => 'SALE-KEEP1', 'branch_id' => 1]);
+        $this->assertDatabaseHas('products', ['id' => $keepProduct->id, 'name' => 'Keep Product']);
+        $this->assertDatabaseHas('branch_product_stocks', [
+            'branch_id' => 1,
+            'product_id' => $keepProduct->id,
+        ]);
+        $this->assertDatabaseMissing('customers', ['name' => 'Wipe Customer']);
+        $this->assertDatabaseMissing('suppliers', ['name' => 'Wipe Supplier']);
+        $this->assertDatabaseMissing('suppliers', ['name' => 'Peshawar Supplier']);
+        $this->assertDatabaseMissing('sales', ['sale_number' => 'SALE-WIPE1']);
+        $this->assertSame(0, BranchProductStock::query()->whereIn('branch_id', [$ashraf->id, $peshawar->id])->count());
+
+        $this->actingAs($ashrafUser);
+        $this->get(route('products.index'))->assertOk()->assertDontSee('Keep Product');
+
+        $this->artisan('branches:wipe-operational', [
+            '--name' => ['Phandu'],
+            '--force' => true,
+        ])->assertFailed();
+        $this->assertDatabaseHas('sales', ['sale_number' => 'SALE-KEEP1']);
+    }
 }
