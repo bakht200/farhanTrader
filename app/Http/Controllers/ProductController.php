@@ -8,7 +8,10 @@ use App\Models\Unit;
 use App\Models\Supplier;
 use App\Models\ProductUnit;
 use App\Models\UnitConversion;
+use App\Models\Branch;
+use App\Models\BranchProductStock;
 use App\Services\BranchStockService;
+use App\Support\BranchRules;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -19,20 +22,17 @@ class ProductController extends Controller
 {
     protected function assertProductVisible(Product $product): void
     {
-        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
-        $visible = Product::query()
-            ->visibleToBranch($branchId)
-            ->whereKey($product->id)
-            ->exists();
-
-        abort_unless($visible, 404);
+        $this->authorize('view', $product);
     }
 
     public function index(Request $request)
     {
-        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
-        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy', 'currentBranchStock')
-            ->visibleToBranch($branchId);
+        $branchId = CurrentBranch::id();
+        abort_unless($branchId || auth()->user()?->isAdmin(), 403);
+        $query = Product::with('category', 'unit', 'baseUnit', 'productUnits.unit', 'createdBy', 'currentBranchStock');
+        if ($branchId) {
+            $query->visibleToBranch($branchId);
+        }
 
         // Search functionality
         if ($request->filled('search')) {
@@ -83,7 +83,7 @@ class ProductController extends Controller
             'base_unit_id' => 'nullable|exists:units,id',
             'selling_type' => 'required|in:retail,wholesale,both',
             'total_units' => 'nullable|string|max:255',
-            'supplier_id' => 'nullable|exists:suppliers,id',
+            'supplier_id' => ['nullable', BranchRules::exists('suppliers')],
             'supplier_name' => 'nullable|string|max:255',
             'supplier_phone' => 'nullable|string|max:255',
             'product_type' => 'required|in:single,variant',
@@ -189,14 +189,8 @@ class ProductController extends Controller
 
         $validated['user_id'] = auth()->id();
 
-        $user = auth()->user();
-        $currentBranchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
-        // Shared catalog = admin, or any user belonging to Branch 1 (Phandu).
-        // Other branch users create private products (owner_branch_id = their branch).
-        $ownerBranchId = ($user && $user->isAdmin())
-            ? CurrentBranch::DEFAULT_BRANCH_ID
-            : (int) ($user->branch_id ?? $currentBranchId);
-        $sharedCatalog = (int) $ownerBranchId === CurrentBranch::DEFAULT_BRANCH_ID;
+        $currentBranchId = CurrentBranch::requireId();
+        $ownerBranchId = $currentBranchId;
         $validated['owner_branch_id'] = $ownerBranchId;
         
         // Set base_unit_id if provided, otherwise use unit_id
@@ -219,9 +213,9 @@ class ProductController extends Controller
             app(BranchStockService::class)->initializeProduct(
                 $product,
                 $initialStock,
-                $sharedCatalog ? $currentBranchId : $ownerBranchId,
+                $currentBranchId,
                 $validated['selling_type'] ?? 'both',
-                $sharedCatalog
+                false
             );
             
             // Create ProductUnit records
@@ -450,23 +444,27 @@ class ProductController extends Controller
         $this->assertProductVisible($product);
         $product->load('category', 'unit', 'createdBy', 'currentBranchStock');
 
-        $branchStocks = \App\Models\Branch::query()
-            ->where('is_active', true)
-            ->orderBy('id')
-            ->with(['productStocks' => function ($query) use ($product) {
-                $query->where('product_id', $product->id);
-            }])
+        $currentBranchId = CurrentBranch::id();
+        $branchStocks = BranchProductStock::query()
+            ->where('product_id', $product->id)
+            ->with('branch')
             ->get()
-            ->map(function ($branch) {
+            ->filter(fn ($row) => $row->branch && $row->branch->is_active)
+            ->map(function ($row) use ($currentBranchId) {
                 return [
-                    'id' => $branch->id,
-                    'name' => $branch->name,
-                    'stock_quantity' => (float) ($branch->productStocks->first()->stock_quantity ?? 0),
-                    'is_current' => (int) $branch->id === (int) (CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID),
+                    'id' => $row->branch_id,
+                    'name' => $row->branch->name,
+                    'stock_quantity' => (float) ($row->stock_quantity ?? 0),
+                    'is_current' => $currentBranchId !== null && (int) $row->branch_id === (int) $currentBranchId,
                 ];
-            });
+            })
+            ->values();
 
-        return view('products.show', compact('product', 'branchStocks'));
+        $assignableBranches = auth()->user()?->isAdmin()
+            ? Branch::query()->where('is_active', true)->orderBy('id')->get()
+            : collect();
+
+        return view('products.show', compact('product', 'branchStocks', 'assignableBranches'));
     }
 
     public function edit(Product $product)
@@ -528,7 +526,7 @@ class ProductController extends Controller
             'base_unit_id' => 'nullable|exists:units,id',
             'selling_type' => 'required|in:retail,wholesale,both',
             'total_units' => 'nullable|string|max:255',
-            'supplier_id' => 'nullable|exists:suppliers,id',
+            'supplier_id' => ['nullable', BranchRules::exists('suppliers')],
             'supplier_name' => 'nullable|string|max:255',
             'supplier_phone' => 'nullable|string|max:255',
             'product_type' => 'required|in:single,variant',
@@ -1023,18 +1021,7 @@ class ProductController extends Controller
 
     public function destroy(Product $product)
     {
-        $this->assertProductVisible($product);
-        $user = auth()->user();
-
-        if ($product->isSharedCatalog()) {
-            abort_unless($user && $user->isAdmin(), 403, 'Only admin can delete shared catalog products.');
-        } else {
-            abort_unless(
-                $user && ($user->isAdmin() || $product->isOwnedByBranch($user->branch_id)),
-                403,
-                'You can only delete products owned by your branch.'
-            );
-        }
+        $this->authorize('delete', $product);
 
         // Delete image if exists
         if ($product->image) {
@@ -1047,7 +1034,7 @@ class ProductController extends Controller
     public function lowStocks(Request $request)
     {
         $tab = $request->get('tab', 'low-stocks'); // 'low-stocks' or 'out-of-stocks'
-        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = CurrentBranch::requireId();
 
         $query = Product::with('category', 'unit', 'createdBy', 'currentBranchStock')
             ->visibleToBranch($branchId)
@@ -1112,7 +1099,7 @@ class ProductController extends Controller
      */
     public function getAllProducts(Request $request)
     {
-        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = CurrentBranch::requireId();
         $query = Product::where('is_active', true)
             ->visibleToBranch($branchId)
             ->with('category', 'unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock');
@@ -1157,6 +1144,7 @@ class ProductController extends Controller
      */
     public function getProductUnits(Product $product)
     {
+        $this->assertProductVisible($product);
         $product->loadMissing(['currentBranchStock', 'unit', 'productUnits.unit']);
 
         $productUnits = collect($product->sellingUnitsForPos())->map(function ($pu) {
@@ -1181,6 +1169,7 @@ class ProductController extends Controller
      */
     public function getConversion(Product $product, $fromUnit, $toUnit)
     {
+        $this->assertProductVisible($product);
         $service = app(\App\Services\UnitConversionService::class);
         
         try {
@@ -1409,5 +1398,38 @@ class ProductController extends Controller
             }));
             $request->merge(['conversions' => $conversions]);
         }
+    }
+
+    public function assignBranches(Request $request, Product $product)
+    {
+        $this->authorize('assign', $product);
+
+        $validated = $request->validate([
+            'branch_ids' => ['required', 'array', 'min:1'],
+            'branch_ids.*' => ['integer', 'exists:branches,id'],
+        ]);
+
+        $stock = app(BranchStockService::class);
+        foreach ($validated['branch_ids'] as $branchId) {
+            $stock->ensureMembership($product, (int) $branchId);
+        }
+
+        return redirect()
+            ->route('products.show', $product)
+            ->with('success', 'Product assigned to selected branches.');
+    }
+
+    public function branchInventory(Request $request)
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+
+        $stocks = BranchProductStock::query()
+            ->with(['branch', 'product'])
+            ->orderBy('branch_id')
+            ->orderBy('product_id')
+            ->paginate($request->get('per_page', 50))
+            ->appends($request->query());
+
+        return view('products.branch-inventory', compact('stocks'));
     }
 }

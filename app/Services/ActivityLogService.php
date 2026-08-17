@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\UserActivityLog;
+use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -53,6 +54,7 @@ class ActivityLogService
         // Prepare log data
         $logData = [
             'user_id' => Auth::id(),
+            'branch_id' => CurrentBranch::id(),
             'ip_address' => $request->ip(),
             'browser' => $browserInfo['name'] ?? null,
             'browser_version' => $browserInfo['version'] ?? null,

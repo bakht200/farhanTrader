@@ -2,13 +2,14 @@
 
 namespace App\Models;
 
+use App\Support\CurrentBranch;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class OrderItem extends Model
 {
     protected $fillable = [
-        'order_id', 'product_id', 'quantity', 'unit_id',
+        'branch_id', 'order_id', 'product_id', 'quantity', 'unit_id',
         'quantity_in_base_unit', 'unit_price', 'discount', 'tax', 'total'
     ];
 
@@ -20,6 +21,33 @@ class OrderItem extends Model
         'tax' => 'decimal:2',
         'total' => 'decimal:2',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (OrderItem $item) {
+            if (! empty($item->branch_id)) {
+                return;
+            }
+
+            if ($item->order_id) {
+                $item->branch_id = Order::withoutGlobalScopes()->whereKey($item->order_id)->value('branch_id');
+            }
+
+            if (empty($item->branch_id)) {
+                $item->branch_id = CurrentBranch::id();
+            }
+        });
+    }
+
+    public function baseQuantity(): float
+    {
+        $base = $this->quantity_in_base_unit;
+        if ($base !== null && (float) $base > 0) {
+            return (float) $base;
+        }
+
+        return (float) $this->quantity;
+    }
 
     public function order(): BelongsTo
     {

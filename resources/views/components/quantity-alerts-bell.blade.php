@@ -7,7 +7,7 @@
     use App\Support\CurrentBranch;
     use Illuminate\Support\Facades\DB;
 
-    $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+    $branchId = CurrentBranch::id();
     $quantityAlerts = collect();
 
     if (auth()->check() && $branchId) {

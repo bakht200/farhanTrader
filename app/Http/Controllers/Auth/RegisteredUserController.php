@@ -7,7 +7,6 @@ use App\Models\User;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
@@ -41,12 +40,15 @@ class RegisteredUserController extends Controller
             'name' => $name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
+            'role' => User::ROLE_BRANCH_USER,
+            'branch_id' => null,
+            'is_active' => false,
         ]);
 
         event(new Registered($user));
 
-        Auth::login($user);
-
-        return redirect(route('dashboard', absolute: false));
+        return redirect()
+            ->route('login')
+            ->with('error', 'Account created. An admin must assign you to a branch before you can sign in.');
     }
 }

@@ -22,7 +22,7 @@ class ProfitReportService
      */
     public function summarize(Carbon $start, Carbon $end, ?int $branchId = null): array
     {
-        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = $branchId ?? CurrentBranch::id();
         $startDate = $start->copy()->startOfDay();
         $endDate = $end->copy()->endOfDay();
 
@@ -73,7 +73,7 @@ class ProfitReportService
      */
     public function bills(Carbon $start, Carbon $end, ?int $branchId = null): Collection
     {
-        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = $branchId ?? CurrentBranch::id();
 
         return Sale::query()
             ->where('branch_id', $branchId)

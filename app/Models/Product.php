@@ -6,6 +6,7 @@ use App\Services\BranchStockService;
 use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,6 +14,8 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Product extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'name', 'slug', 'brand', 'sku', 'description', 'category_id', 'unit_id', 'base_unit_id',
         'selling_type', 'total_units', 'supplier_name', 'supplier_phone', 'supplier_id',
@@ -70,7 +73,7 @@ class Product extends Model
     public function currentBranchStock(): HasOne
     {
         return $this->hasOne(BranchProductStock::class)
-            ->where('branch_id', CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID);
+            ->where('branch_id', CurrentBranch::id() ?? 0);
     }
 
     public function baseUnit(): BelongsTo
@@ -93,8 +96,21 @@ class Product extends Model
         return $this->productUnits()->baseUnit()->active()->with('unit')->first();
     }
 
+    public function isAssignedToBranch(?int $branchId): bool
+    {
+        if ($branchId === null) {
+            return false;
+        }
+
+        return $this->branchStocks()->where('branch_id', $branchId)->exists();
+    }
+
     public function isSharedCatalog(): bool
     {
+        if (CurrentBranch::strictIsolation()) {
+            return $this->branchStocks()->count() > 1;
+        }
+
         $owner = $this->owner_branch_id;
 
         return $owner === null || (int) $owner === CurrentBranch::DEFAULT_BRANCH_ID;
@@ -106,20 +122,35 @@ class Product extends Model
             return false;
         }
 
+        if (CurrentBranch::strictIsolation()) {
+            return $this->isAssignedToBranch($branchId);
+        }
+
         return (int) $this->owner_branch_id === (int) $branchId;
     }
 
     /**
-     * Shared catalog (owner branch 1 / null) OR private products for this branch.
+     * Membership in branch_product_stocks is the visibility gate.
+     * Dual-read (strict_isolation=false) also keeps legacy owner_branch_id sharing.
      */
     public function scopeVisibleToBranch(Builder $query, ?int $branchId = null): Builder
     {
-        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = $branchId ?? CurrentBranch::id();
+
+        if (! $branchId) {
+            return $query->whereRaw('0 = 1');
+        }
 
         return $query->where(function (Builder $q) use ($branchId) {
-            $q->whereNull('owner_branch_id')
-                ->orWhere('owner_branch_id', CurrentBranch::DEFAULT_BRANCH_ID)
-                ->orWhere('owner_branch_id', $branchId);
+            $q->whereHas('branchStocks', function (Builder $stocks) use ($branchId) {
+                $stocks->where('branch_id', $branchId);
+            });
+
+            if (! CurrentBranch::strictIsolation()) {
+                $q->orWhereNull('owner_branch_id')
+                    ->orWhere('owner_branch_id', CurrentBranch::DEFAULT_BRANCH_ID)
+                    ->orWhere('owner_branch_id', $branchId);
+            }
         });
     }
 
@@ -136,13 +167,35 @@ class Product extends Model
      */
     public function writesMasterForCurrentBranch(?int $branchId = null): bool
     {
-        $branchId = $branchId ?? CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = $branchId ?? CurrentBranch::id();
 
-        if (! $this->isSharedCatalog() && $this->isOwnedByBranch($branchId)) {
+        if (! $branchId || ! $this->exists) {
+            return false;
+        }
+
+        if (! $this->isAssignedToBranch($branchId) && ! CurrentBranch::strictIsolation()) {
+            if (! $this->isSharedCatalog() && $this->isOwnedByBranch($branchId)) {
+                return true;
+            }
+
+            return $this->isSharedCatalog() && (int) $branchId === CurrentBranch::DEFAULT_BRANCH_ID;
+        }
+
+        if (! $this->isAssignedToBranch($branchId)) {
+            return false;
+        }
+
+        $membershipCount = $this->relationLoaded('branchStocks')
+            ? $this->branchStocks->count()
+            : $this->branchStocks()->count();
+
+        if ($membershipCount <= 1) {
             return true;
         }
 
-        return $this->isSharedCatalog() && (int) $branchId === CurrentBranch::DEFAULT_BRANCH_ID;
+        $user = auth()->user();
+
+        return $user && $user->isAdmin();
     }
 
     protected function branchOverrideValue(string $column): mixed
@@ -151,8 +204,13 @@ class Product extends Model
             return $this->currentBranchStock?->{$column};
         }
 
+        $branchId = CurrentBranch::id();
+        if (! $branchId) {
+            return null;
+        }
+
         $stock = BranchProductStock::query()
-            ->where('branch_id', CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('branch_id', $branchId)
             ->where('product_id', $this->id)
             ->first();
 
@@ -265,17 +323,17 @@ class Product extends Model
         $this->unsetRelation('currentBranchStock');
     }
 
-    public function incrementStock(float $amount, ?int $branchId = null): float
+    public function incrementStock(float $amount, ?int $branchId = null, array $movement = []): float
     {
-        $qty = app(BranchStockService::class)->increment($this, $amount, $branchId);
+        $qty = app(BranchStockService::class)->increment($this, $amount, $branchId, $movement);
         $this->unsetRelation('currentBranchStock');
 
         return $qty;
     }
 
-    public function decrementStock(float $amount, ?int $branchId = null): float
+    public function decrementStock(float $amount, ?int $branchId = null, array $movement = []): float
     {
-        $qty = app(BranchStockService::class)->decrement($this, $amount, $branchId);
+        $qty = app(BranchStockService::class)->decrement($this, $amount, $branchId, $movement);
         $this->unsetRelation('currentBranchStock');
 
         return $qty;

@@ -45,11 +45,14 @@ class UnitController extends Controller
 
     public function create()
     {
+        $this->authorize('create', Unit::class);
+
         return view('units.create');
     }
 
     public function store(Request $request)
     {
+        $this->authorize('create', Unit::class);
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:units,name',
             'short_name' => 'required|string|max:10|unique:units,short_name',
@@ -63,11 +66,14 @@ class UnitController extends Controller
 
     public function edit(Unit $unit)
     {
+        $this->authorize('update', $unit);
+
         return view('units.edit', compact('unit'));
     }
 
     public function update(Request $request, Unit $unit)
     {
+        $this->authorize('update', $unit);
         $validated = $request->validate([
             'name' => 'required|string|max:255|unique:units,name,' . $unit->id,
             'short_name' => 'required|string|max:10|unique:units,short_name,' . $unit->id,
@@ -81,6 +87,8 @@ class UnitController extends Controller
 
     public function destroy(Unit $unit)
     {
+        $this->authorize('delete', $unit);
+
         $unit->delete();
         return redirect()->route('units.index')->with('success', 'Unit deleted successfully.');
     }

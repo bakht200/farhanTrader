@@ -9,6 +9,7 @@ class UserActivityLog extends Model
 {
     protected $fillable = [
         'user_id',
+        'branch_id',
         'ip_address',
         'browser',
         'browser_version',

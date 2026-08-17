@@ -28,9 +28,9 @@ Route::get('/', function () {
     return redirect()->route('dashboard');
 });
 
-Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified'])->name('dashboard');
+Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified', 'branch.context'])->name('dashboard');
 
-Route::middleware('auth')->group(function () {
+Route::middleware(['auth', 'branch.context'])->group(function () {
     // Offline sync API
     Route::prefix('sync')->name('sync.')->group(function () {
         Route::get('/ping', [SyncController::class, 'ping'])->name('ping');
@@ -48,6 +48,8 @@ Route::middleware('auth')->group(function () {
     // Products routes
     Route::get('/products/low-stocks', [ProductController::class, 'lowStocks'])->name('products.low-stocks');
     Route::get('/products/api/all', [ProductController::class, 'getAllProducts'])->name('products.api.all');
+    Route::get('/products/branch-inventory', [ProductController::class, 'branchInventory'])->middleware('admin')->name('products.branch-inventory');
+    Route::post('/products/{product}/assign-branches', [ProductController::class, 'assignBranches'])->middleware('admin')->name('products.assign-branches');
     Route::get('/products/{product}/units', [ProductController::class, 'getProductUnits'])->name('products.units');
     Route::get('/products/{product}/conversion/{fromUnit}/{toUnit}', [ProductController::class, 'getConversion'])->name('products.conversion');
     Route::resource('products', ProductController::class);
@@ -139,9 +141,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/anomalies', [AiInsightsController::class, 'anomalies'])->name('anomalies');
     });
 
-    // User Activity routes
-    Route::get('user-activities/{userActivity}', [UserActivityController::class, 'show'])->name('user-activities.show');
-    Route::get('user-activities', [UserActivityController::class, 'index'])->name('user-activities.index');
+    // User Activity routes (admin only)
+    Route::middleware('admin')->group(function () {
+        Route::get('user-activities/{userActivity}', [UserActivityController::class, 'show'])->name('user-activities.show');
+        Route::get('user-activities', [UserActivityController::class, 'index'])->name('user-activities.index');
+    });
 
     // System routes
     Route::get('health-check', [HealthCheckController::class, 'index'])->name('health-check.index');

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\InsufficientStockException;
 use App\Models\Product;
 use App\Models\Category;
 use App\Models\Customer;
@@ -10,6 +11,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Services\CustomerBalanceService;
 use App\Services\UnitConversionService;
+use App\Support\BranchRules;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -19,7 +21,7 @@ class POSController extends Controller
 {
     protected function findVisibleProduct(int $productId): ?Product
     {
-        $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = CurrentBranch::requireId();
 
         return Product::query()
             ->visibleToBranch($branchId)
@@ -33,7 +35,7 @@ class POSController extends Controller
         $search = $request->get('search', '');
 
         $query = Product::where('is_active', true)
-            ->visibleToBranch(CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID)
+            ->visibleToBranch(CurrentBranch::requireId())
             ->with(['category', 'unit', 'productUnits.unit', 'currentBranchStock']);
 
         // Category filter
@@ -129,8 +131,8 @@ class POSController extends Controller
         try {
             // Custom validation rules - product_id is required for regular products, product_name for custom products
             $validated = $request->validate([
-                'order_id' => 'nullable|exists:sales,id', // For editing existing order
-                'customer_id' => 'nullable|exists:customers,id',
+                'order_id' => ['nullable', BranchRules::exists('sales')],
+                'customer_id' => ['nullable', BranchRules::exists('customers')],
                 'customer_name' => 'nullable|string|max:255',
                 'payment_method' => 'required|in:cash,card,other',
                 'paid_amount' => 'nullable|numeric|min:0',
@@ -302,7 +304,11 @@ class POSController extends Controller
                     if ($oldItem->product_id && $oldItem->product) {
                         // Use quantity_in_base_unit if available, otherwise use quantity
                         $quantityToRestore = $oldItem->quantity_in_base_unit ?? $oldItem->quantity;
-                        $oldItem->product->incrementStock( $quantityToRestore);
+                        $oldItem->product->incrementStock($quantityToRestore, null, [
+                            'source_type' => 'sale',
+                            'source_id' => $sale->id,
+                            'reason' => 'POS edit restore',
+                        ]);
                     }
                 }
                 
@@ -425,7 +431,11 @@ class POSController extends Controller
                 ]);
 
                 // Update product stock using base unit quantity
-                $newQty = $product->decrementStock($quantityInBaseUnit);
+                $newQty = $product->decrementStock($quantityInBaseUnit, null, [
+                    'source_type' => 'sale',
+                    'source_id' => $sale->id,
+                    'reason' => 'POS sale',
+                ]);
 
                 if (! isset($stockChangeTracker[$product->id])) {
                     $stockChangeTracker[$product->id] = [
@@ -574,6 +584,17 @@ class POSController extends Controller
 
         return redirect()->route('sales.pos.index')->with('success', 'Sale processed successfully. Sale Number: ' . $sale->sale_number);
         
+        } catch (InsufficientStockException $e) {
+            DB::rollBack();
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 400);
+            }
+
+            return redirect()->back()->with('error', $e->getMessage());
         } catch (\Exception $e) {
             DB::rollBack();
             
@@ -592,11 +613,11 @@ class POSController extends Controller
     {
         try {
             $validated = $request->validate([
-                'customer_id' => 'nullable|exists:customers,id',
+                'customer_id' => ['nullable', BranchRules::exists('customers')],
                 'customer_name' => 'nullable|string|max:255',
                 'items' => 'required|array|min:1',
                 // Allow nullable product_id here to support custom products; additional per-item checks below
-                'items.*.product_id' => 'nullable|exists:products,id',
+                'items.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
                 'items.*.quantity' => 'required|numeric|min:0.01',
                 'items.*.unit_id' => 'nullable|exists:units,id',
                 'items.*.selling_price' => 'required|numeric|min:0',
@@ -1024,7 +1045,7 @@ class POSController extends Controller
     {
         try {
             $unitId = $request->integer('unit_id') ?: null;
-            $branchId = CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+            $branchId = CurrentBranch::requireId();
 
             $baseQuery = function () use ($customerId, $productId, $branchId) {
                 return SaleItem::query()

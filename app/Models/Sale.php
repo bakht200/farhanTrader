@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToBranch;
 use App\Services\CustomerBalanceService;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,6 +13,7 @@ use Illuminate\Support\Collection;
 class Sale extends Model
 {
     use BelongsToBranch;
+    use HasFactory;
 
     protected $fillable = [
         'branch_id', 'sale_number', 'customer_id', 'user_id', 'sale_date',
@@ -66,8 +68,11 @@ class Sale extends Model
     public static function generateSaleNumber(string $prefix = 'SALE', ?int $branchId = null): string
     {
         $branchId = $branchId
-            ?? \App\Support\CurrentBranch::id()
-            ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+            ?? \App\Support\CurrentBranch::id();
+
+        if (! $branchId) {
+            throw new \App\Exceptions\MissingBranchContextException();
+        }
 
         $useBranchFormat = $branchId !== \App\Support\CurrentBranch::DEFAULT_BRANCH_ID
             && ! in_array($prefix, ['PB'], true);

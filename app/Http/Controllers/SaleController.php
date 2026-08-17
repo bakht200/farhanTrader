@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Sale;
 use App\Models\Category;
+use App\Support\BranchRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -194,7 +195,22 @@ class SaleController extends Controller
 
     public function destroy(Sale $sale)
     {
-        $sale->delete();
+        $this->authorize('delete', $sale);
+
+        DB::transaction(function () use ($sale) {
+            $sale->load('items.product');
+            foreach ($sale->items as $item) {
+                if ($item->product_id && $item->product) {
+                    $item->product->incrementStock($item->baseQuantity(), null, [
+                        'source_type' => 'sale',
+                        'source_id' => $sale->id,
+                        'reason' => 'sale deleted',
+                    ]);
+                }
+            }
+            $sale->delete();
+        });
+
         return redirect()->route('sales.index')->with('success', 'Sale deleted successfully.');
     }
 
@@ -320,7 +336,7 @@ class SaleController extends Controller
     {
         try {
             $validated = $request->validate([
-                'sale_id' => 'required|exists:sales,id',
+                'sale_id' => ['required', BranchRules::exists('sales')],
                 'amount' => 'required|numeric|min:0.01',
                 'comment' => 'required|string|min:1|max:1000',
             ]);

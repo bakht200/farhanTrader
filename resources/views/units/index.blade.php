@@ -58,12 +58,14 @@
                     </select>
                 </form>
 
+                @if(auth()->user()?->isAdmin())
                 <a href="{{ route('units.create') }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md font-medium inline-flex items-center">
                     <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                     </svg>
                     Add Unit
                 </a>
+                @endif
             </div>
         </div>
     </div>
@@ -147,6 +149,7 @@
                             @endif
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            @if(auth()->user()?->isAdmin())
                             <div class="flex items-center space-x-3">
                                 <a href="{{ route('units.edit', $unit) }}" class="text-green-600 hover:text-green-900" title="Edit">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -163,6 +166,7 @@
                                     </button>
                                 </form>
                             </div>
+                            @endif
                         </td>
                     </tr>
                     @empty

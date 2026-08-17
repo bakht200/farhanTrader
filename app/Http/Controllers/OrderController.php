@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Order;
 use App\Models\Sale;
+use App\Models\Product;
+use App\Support\BranchRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -511,8 +513,8 @@ class OrderController extends Controller
     {
         $validated = $request->validate([
             'items' => 'required|array|min:1',
-            'items.*.id' => 'nullable|exists:sale_items,id',
-            'items.*.product_id' => 'nullable|exists:products,id',
+            'items.*.id' => 'nullable|integer',
+            'items.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
             'items.*.product_name' => 'nullable|string|max:255',
             'items.*.quantity' => 'required|numeric|min:0.01',
             'items.*.unit_price' => 'required|numeric|min:0',
@@ -546,11 +548,18 @@ class OrderController extends Controller
             $itemsToDelete = array_diff($existingItemIds, $submittedItemIds);
             if (!empty($itemsToDelete)) {
                 foreach ($itemsToDelete as $itemId) {
-                    $item = \App\Models\SaleItem::find($itemId);
+                    $item = $isSale
+                        ? $order->items()->whereKey($itemId)->first()
+                        : $order->items()->whereKey($itemId)->first();
                     if ($item) {
                         // Restore stock if product exists
                         if ($item->product_id && $item->product) {
-                            $item->product->incrementStock( $item->quantity);
+                            $qty = method_exists($item, 'baseQuantity') ? $item->baseQuantity() : (float) ($item->quantity_in_base_unit ?? $item->quantity);
+                            $item->product->incrementStock($qty, null, [
+                                'source_type' => 'order',
+                                'source_id' => $order->id,
+                                'reason' => 'order item removed',
+                            ]);
                         }
                         $item->delete();
                     }
@@ -568,15 +577,16 @@ class OrderController extends Controller
                 
                 if (isset($itemData['id']) && $itemData['id']) {
                     // Update existing item
-                    $item = \App\Models\SaleItem::find($itemData['id']);
+                    $item = $order->items()->whereKey($itemData['id'])->first();
                     if ($item) {
-                        $oldQuantity = $item->quantity;
+                        $oldQuantity = method_exists($item, 'baseQuantity') ? $item->baseQuantity() : (float) ($item->quantity_in_base_unit ?? $item->quantity);
                         $oldProductId = $item->product_id;
                         
                         $item->update([
                             'product_id' => $itemData['product_id'] ?? null,
                             'product_name' => $itemData['product_name'] ?? null,
                             'quantity' => $itemData['quantity'],
+                            'quantity_in_base_unit' => $itemData['quantity'],
                             'unit_price' => $itemData['unit_price'],
                             'discount' => $itemData['discount'] ?? 0,
                             'tax' => $itemData['tax'] ?? 0,
@@ -587,39 +597,66 @@ class OrderController extends Controller
                         if ($oldProductId && (int) $oldProductId === (int) ($itemData['product_id'] ?? 0)) {
                             $quantityDiff = (float) $oldQuantity - (float) $itemData['quantity'];
                             if ($quantityDiff > 0.000001) {
-                                $item->product?->incrementStock($quantityDiff);
+                                $item->product?->incrementStock($quantityDiff, null, [
+                                    'source_type' => 'order',
+                                    'source_id' => $order->id,
+                                    'reason' => 'order qty decrease',
+                                ]);
                             } elseif ($quantityDiff < -0.000001) {
-                                $item->product?->decrementStock(abs($quantityDiff));
+                                $item->product?->decrementStock(abs($quantityDiff), null, [
+                                    'source_type' => 'order',
+                                    'source_id' => $order->id,
+                                    'reason' => 'order qty increase',
+                                ]);
                             }
                         } else {
                             if ($oldProductId) {
-                                $oldProduct = \App\Models\Product::find($oldProductId);
-                                $oldProduct?->incrementStock((float) $oldQuantity);
+                                $oldProduct = Product::query()->visibleToBranch()->find($oldProductId);
+                                $oldProduct?->incrementStock((float) $oldQuantity, null, [
+                                    'source_type' => 'order',
+                                    'source_id' => $order->id,
+                                    'reason' => 'order product swap restore',
+                                ]);
                             }
                             if (! empty($itemData['product_id'])) {
-                                $newProduct = \App\Models\Product::find($itemData['product_id']);
-                                $newProduct?->decrementStock((float) $itemData['quantity']);
+                                $newProduct = Product::query()->visibleToBranch()->find($itemData['product_id']);
+                                $newProduct?->decrementStock((float) $itemData['quantity'], null, [
+                                    'source_type' => 'order',
+                                    'source_id' => $order->id,
+                                    'reason' => 'order product swap take',
+                                ]);
                             }
                         }
                     }
                 } else {
                     // Create new item
-                    \App\Models\SaleItem::create([
-                        'sale_id' => $order->id,
+                    $payload = [
                         'product_id' => $itemData['product_id'] ?? null,
-                        'product_name' => $itemData['product_name'] ?? null,
                         'quantity' => $itemData['quantity'],
+                        'quantity_in_base_unit' => $itemData['quantity'],
                         'unit_price' => $itemData['unit_price'],
                         'discount' => $itemData['discount'] ?? 0,
                         'tax' => $itemData['tax'] ?? 0,
                         'total' => $itemTotal,
-                    ]);
+                    ];
+                    if ($isSale) {
+                        $payload['sale_id'] = $order->id;
+                        $payload['product_name'] = $itemData['product_name'] ?? null;
+                        \App\Models\SaleItem::create($payload);
+                    } else {
+                        $payload['order_id'] = $order->id;
+                        \App\Models\OrderItem::create($payload);
+                    }
 
                     // Decrease stock if product exists
                     if ($itemData['product_id']) {
-                        $product = \App\Models\Product::find($itemData['product_id']);
+                        $product = Product::query()->visibleToBranch()->find($itemData['product_id']);
                         if ($product) {
-                            $product->decrementStock( $itemData['quantity']);
+                            $product->decrementStock($itemData['quantity'], null, [
+                                'source_type' => 'order',
+                                'source_id' => $order->id,
+                                'reason' => 'order item added',
+                            ]);
                         }
                     }
                 }

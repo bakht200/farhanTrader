@@ -50,6 +50,23 @@ class LoginRequest extends FormRequest
         }
 
         RateLimiter::clear($this->throttleKey());
+
+        $user = Auth::user();
+        if ($user && ! $user->isAdmin()) {
+            if (! $user->is_active) {
+                Auth::logout();
+                throw ValidationException::withMessages([
+                    'email' => 'This account is disabled.',
+                ]);
+            }
+
+            if (! \App\Support\CurrentBranch::id($user)) {
+                Auth::logout();
+                throw ValidationException::withMessages([
+                    'email' => 'Your account is not assigned to an active branch.',
+                ]);
+            }
+        }
     }
 
     /**

@@ -11,6 +11,8 @@ class UserActivityController extends Controller
 {
     public function index(Request $request)
     {
+        $this->authorize('viewAny', UserActivityLog::class);
+
         $query = UserActivityLog::with('user');
 
         // Search functionality
@@ -171,6 +173,7 @@ class UserActivityController extends Controller
 
     public function show(UserActivityLog $userActivity)
     {
+        $this->authorize('view', $userActivity);
         $userActivity->load('user');
         return view('user-activities.show', compact('userActivity'));
     }

@@ -20,7 +20,7 @@ class BranchShareService
 
     public function currentBranchId(): int
     {
-        return CurrentBranch::id() ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        return CurrentBranch::requireId();
     }
 
     /**

@@ -76,7 +76,8 @@ class BranchController extends Controller
             ->with('branch')
             ->where('role', User::ROLE_BRANCH_USER)
             ->where(function ($query) use ($branch) {
-                $query->whereNull('branch_id')
+                $query->where('is_active', false)
+                    ->orWhereNull('branch_id')
                     ->orWhere('branch_id', '!=', $branch->id);
             })
             ->orderBy('name')
@@ -248,7 +249,7 @@ class BranchController extends Controller
             ->where('role', User::ROLE_BRANCH_USER)
             ->firstOrFail();
 
-        $user->update(['branch_id' => $branch->id]);
+        $user->update(['branch_id' => $branch->id, 'is_active' => true]);
 
         return redirect()
             ->route('branches.edit', $branch)
@@ -263,11 +264,11 @@ class BranchController extends Controller
                 ->with('error', 'That user is not assigned to this branch.');
         }
 
-        $user->update(['branch_id' => null]);
+        $user->update(['is_active' => false]);
 
         return redirect()
             ->route('branches.edit', $branch)
-            ->with('success', "{$user->name} removed from {$branch->name}.");
+            ->with('success', "{$user->name} disabled and removed from {$branch->name}.");
     }
 
     public function switch(Request $request): RedirectResponse

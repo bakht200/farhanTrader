@@ -68,7 +68,7 @@ class SalesReportController extends Controller
             : ($currentInvoices > 0 ? 100 : 0);
 
         // Build sales report query
-        $branchId = \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = \App\Support\CurrentBranch::id();
         $salesReportQuery = SaleItem::select(
                 'products.sku',
                 'products.name as product_name',

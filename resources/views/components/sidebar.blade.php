@@ -82,6 +82,16 @@
                         Low Stocks
                     </a>
                 </li>
+                @if(auth()->user()?->isAdmin())
+                <li>
+                    <a href="{{ route('products.branch-inventory') }}" class="flex items-center px-3 py-2 rounded-md hover:bg-orange-50/70 {{ request()->routeIs('products.branch-inventory') ? 'bg-orange-50 text-orange-700 font-medium' : 'text-gray-700' }}">
+                        <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+                        </svg>
+                        All Branch Stock
+                    </a>
+                </li>
+                @endif
                 <li>
                     <a href="{{ route('categories.index') }}" class="flex items-center px-3 py-2 rounded-md hover:bg-orange-50/70 {{ request()->routeIs('categories.*') ? 'bg-orange-50 text-orange-700 font-medium' : 'text-gray-700' }}">
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -14,7 +14,7 @@ class AiInsightsService
 {
     public function getTopSummaryStats(): array
     {
-        $branchId = \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+        $branchId = \App\Support\CurrentBranch::id();
 
         $totalProfit = (float) SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
@@ -75,6 +75,7 @@ class AiInsightsService
         }
 
         $products = Product::query()
+            ->visibleToBranch()
             ->with('currentBranchStock')
             ->select('id', 'stock_quantity', 'low_stock_threshold', 'quantity_alert')
             ->get();
@@ -100,7 +101,7 @@ class AiInsightsService
         $categoryRevenue = SaleItem::query()
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->where('sales.sale_date', '>=', $now->copy()->subDays(90))
             ->groupBy('products.category_id')
             ->selectRaw('products.category_id, SUM(sale_items.total) as revenue')
@@ -175,13 +176,13 @@ class AiInsightsService
 
         $velocity = SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->where('sales.sale_date', '>=', $windowStart)
             ->groupBy('sale_items.product_id')
             ->selectRaw('sale_items.product_id, SUM(sale_items.quantity) / 30 as daily_velocity')
             ->pluck('daily_velocity', 'product_id');
 
-        $products = Product::query()->with(['category:id,name', 'currentBranchStock'])->get();
+        $products = Product::query()->visibleToBranch()->with(['category:id,name', 'currentBranchStock'])->get();
 
         $alerts = $products->map(function (Product $product) use ($velocity) {
             $currentStock = (float) ($product->stock_quantity ?? 0);
@@ -316,7 +317,7 @@ class AiInsightsService
 
         $categoryPerformance = SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
             ->leftJoin('categories', 'categories.id', '=', 'products.category_id')
             ->where('sales.sale_date', '>=', now()->subDays(30))
@@ -342,7 +343,7 @@ class AiInsightsService
     {
         $rows = SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->where('sales.sale_date', '>=', now()->subDays(90))
             ->whereNotNull('sale_items.product_id')
             ->groupBy('sale_items.product_id')
@@ -350,7 +351,7 @@ class AiInsightsService
             ->orderByDesc('revenue')
             ->get();
 
-        $products = Product::query()->with('category:id,name')->whereIn('id', $rows->pluck('product_id'))->get()->keyBy('id');
+        $products = Product::query()->visibleToBranch()->with('category:id,name')->whereIn('id', $rows->pluck('product_id'))->get()->keyBy('id');
         $totalRevenue = max(0.01, (float) $rows->sum('revenue'));
 
         $cumulative = 0.0;
@@ -489,7 +490,7 @@ class AiInsightsService
         }
 
         $totalOrders = max(1, $saleItems->count());
-        $productMap = Product::query()->whereIn('id', collect(array_keys($productOrderCounts))->map(fn ($k) => (int) $k))->get()->keyBy('id');
+        $productMap = Product::query()->visibleToBranch()->whereIn('id', collect(array_keys($productOrderCounts))->map(fn ($k) => (int) $k))->get()->keyBy('id');
 
         return collect($pairCounts)
             ->sortDesc()
@@ -554,7 +555,7 @@ class AiInsightsService
 
         $highDiscounts = SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->where('sales.sale_date', '>=', $start)
             ->whereRaw('(sale_items.discount / NULLIF((sale_items.unit_price * sale_items.quantity), 0)) > 0.35')
             ->selectRaw('sales.sale_date as day, sale_items.discount as discount')
@@ -573,7 +574,7 @@ class AiInsightsService
         $priceDrop = SaleItem::query()
             ->join('products', 'products.id', '=', 'sale_items.product_id')
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->where('sales.branch_id', \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID)
+            ->where('sales.branch_id', \App\Support\CurrentBranch::id())
             ->where('sales.sale_date', '>=', $start)
             ->whereRaw('sale_items.unit_price < (products.selling_price * 0.7)')
             ->selectRaw('sales.sale_date as day')

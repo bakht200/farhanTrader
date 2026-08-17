@@ -155,12 +155,38 @@ class SyncController extends Controller
         ]);
     }
 
+    protected function resolvedBranchId(User $user, array $item): int
+    {
+        if (! $user->isAdmin()) {
+            $branchId = CurrentBranch::id($user);
+            if (! $branchId) {
+                throw new \RuntimeException('No branch assigned.');
+            }
+
+            return $branchId;
+        }
+
+        $requested = $item['branch_id'] ?? CurrentBranch::id($user);
+        if (! $requested) {
+            throw new \RuntimeException('Select a branch before syncing.');
+        }
+
+        return (int) $requested;
+    }
+
     protected function applyPushItem(User $user, array $item): array
     {
         $uuid = $item['client_uuid'];
 
         if (Schema::hasTable('sync_id_mappings')) {
-            $existing = DB::table('sync_id_mappings')->where('client_uuid', $uuid)->first();
+            $existingQuery = DB::table('sync_id_mappings')->where('client_uuid', $uuid);
+            $branchId = CurrentBranch::id($user);
+            if ($branchId) {
+                $existingQuery->where(function ($q) use ($branchId) {
+                    $q->where('branch_id', $branchId)->orWhereNull('branch_id');
+                });
+            }
+            $existing = $existingQuery->first();
             if ($existing) {
                 $meta = is_string($existing->meta)
                     ? (json_decode($existing->meta, true) ?: [])
@@ -204,17 +230,18 @@ class SyncController extends Controller
     protected function pushCustomer(User $user, array $item, string $uuid): array
     {
         $payload = $item['payload'];
+        $branchId = $this->resolvedBranchId($user, $item);
         $customer = Customer::create([
             'name' => $payload['name'] ?? 'Customer',
             'phone' => $payload['phone'] ?? null,
             'email' => $payload['email'] ?? null,
             'address' => $payload['address'] ?? null,
             'customer_type' => $payload['customer_type'] ?? 'retail',
-            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'branch_id' => $branchId,
             'is_active' => true,
         ]);
 
-        $this->mapUuid($uuid, 'customer', $customer->id);
+        $this->mapUuid($uuid, 'customer', $customer->id, [], $branchId);
 
         return [
             'client_uuid' => $uuid,
@@ -227,17 +254,18 @@ class SyncController extends Controller
     protected function pushExpense(User $user, array $item, string $uuid): array
     {
         $payload = $item['payload'];
+        $branchId = $this->resolvedBranchId($user, $item);
         $expense = Expense::create([
             'name' => $payload['name'] ?? $payload['title'] ?? 'Expense',
             'amount' => $payload['amount'] ?? 0,
             'category' => $payload['category'] ?? null,
             'description' => $payload['description'] ?? $payload['notes'] ?? null,
             'expense_date' => $payload['expense_date'] ?? now()->toDateString(),
-            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'branch_id' => $branchId,
             'user_id' => $user->id,
         ]);
 
-        $this->mapUuid($uuid, 'expense', $expense->id);
+        $this->mapUuid($uuid, 'expense', $expense->id, [], $branchId);
 
         return [
             'client_uuid' => $uuid,
@@ -250,12 +278,13 @@ class SyncController extends Controller
     protected function pushSupplier(User $user, array $item, string $uuid): array
     {
         $payload = $item['payload'];
+        $branchId = $this->resolvedBranchId($user, $item);
         $email = isset($payload['email']) && trim((string) $payload['email']) !== ''
             ? trim((string) $payload['email'])
             : null;
 
         $supplier = Supplier::create([
-            'branch_id' => $item['branch_id'] ?? CurrentBranch::id($user),
+            'branch_id' => $branchId,
             'supplier_id' => ! empty($payload['supplier_id']) ? $payload['supplier_id'] : null,
             'name' => $payload['name'] ?? 'Supplier',
             'company_name' => $payload['company_name'] ?? null,
@@ -272,7 +301,7 @@ class SyncController extends Controller
 
         $this->mapUuid($uuid, 'supplier', $supplier->id, [
             'supplier_id' => $supplier->supplier_id,
-        ]);
+        ], $branchId);
 
         return [
             'client_uuid' => $uuid,
@@ -287,9 +316,17 @@ class SyncController extends Controller
     {
         $payload = $item['payload'];
         $items = $payload['items'] ?? [];
+        $branchId = $this->resolvedBranchId($user, $item);
 
         if (! is_array($items) || count($items) < 1) {
             throw new \RuntimeException('Sale requires items.');
+        }
+
+        if (! empty($payload['customer_id'])) {
+            $customerOk = Customer::query()->whereKey($payload['customer_id'])->where('branch_id', $branchId)->exists();
+            if (! $customerOk) {
+                throw new \RuntimeException('Customer does not belong to this branch.');
+            }
         }
 
         $subtotal = 0;
@@ -311,12 +348,12 @@ class SyncController extends Controller
 
             $isCustom = isset($line['is_custom']) && ($line['is_custom'] == '1' || $line['is_custom'] === true);
             if (! $isCustom && ! empty($line['product_id'])) {
-                $product = Product::find($line['product_id']);
+                $product = Product::query()->visibleToBranch($branchId)->find($line['product_id']);
                 if (! $product) {
                     throw new \RuntimeException('Product not found: '.$line['product_id']);
                 }
                 $qty = (float) ($line['quantity'] ?? 0);
-                if ($qty > (float) ($product->stock_quantity ?? 0) + 0.000001) {
+                if ($qty > (float) ($product->currentStock($branchId) ?? 0) + 0.000001) {
                     throw new \RuntimeException("Insufficient stock for {$product->name}");
                 }
             }
@@ -332,7 +369,6 @@ class SyncController extends Controller
         }
 
         $customerName = trim((string) ($payload['customer_name'] ?? 'Walk-in Customer')) ?: 'Walk-in Customer';
-        $branchId = (int) ($item['branch_id'] ?? CurrentBranch::id($user) ?? CurrentBranch::DEFAULT_BRANCH_ID);
         $saleNumber = Sale::generateSaleNumber('SALE', $branchId);
 
         $sale = Sale::create([
@@ -357,12 +393,18 @@ class SyncController extends Controller
             $price = (float) ($line['selling_price'] ?? 0);
             $lineTotal = round($qty * $price, 2);
 
+            $product = null;
+            if (! $isCustom && ! empty($line['product_id'])) {
+                $product = Product::query()->visibleToBranch($branchId)->find($line['product_id']);
+            }
+
             $productName = $isCustom
                 ? ($line['product_name'] ?? 'Custom Product')
-                : (Product::find($line['product_id'] ?? null)?->name);
+                : ($product?->name);
 
             SaleItem::create([
                 'sale_id' => $sale->id,
+                'branch_id' => $branchId,
                 'product_id' => $isCustom ? null : ($line['product_id'] ?? null),
                 'product_name' => $productName,
                 'quantity' => $qty,
@@ -373,17 +415,17 @@ class SyncController extends Controller
                 'total' => $lineTotal,
             ]);
 
-            if (! $isCustom && ! empty($line['product_id'])) {
-                $product = Product::find($line['product_id']);
-                if ($product && method_exists($product, 'decrementStock')) {
-                    $product->decrementStock($qty);
-                } elseif ($product) {
-                    $product->decrement('stock_quantity', $qty);
-                }
+            if ($product) {
+                $product->decrementStock($qty, $branchId, [
+                    'source_type' => 'sale',
+                    'source_id' => $sale->id,
+                    'reason' => 'offline sync sale',
+                    'idempotency_key' => 'sync-sale-'.$uuid.'-'.$product->id,
+                ]);
             }
         }
 
-        $this->mapUuid($uuid, 'sale', $sale->id, ['sale_number' => $saleNumber]);
+        $this->mapUuid($uuid, 'sale', $sale->id, ['sale_number' => $saleNumber], $branchId);
 
         return [
             'client_uuid' => $uuid,
@@ -394,20 +436,26 @@ class SyncController extends Controller
         ];
     }
 
-    protected function mapUuid(string $uuid, string $entity, $serverId, array $meta = []): void
+    protected function mapUuid(string $uuid, string $entity, $serverId, array $meta = [], ?int $branchId = null): void
     {
         if (! Schema::hasTable('sync_id_mappings')) {
             return;
         }
 
-        DB::table('sync_id_mappings')->insert([
+        $row = [
             'client_uuid' => $uuid,
             'entity' => $entity,
             'server_id' => (string) $serverId,
             'meta' => json_encode($meta),
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ];
+
+        if (Schema::hasColumn('sync_id_mappings', 'branch_id')) {
+            $row['branch_id'] = $branchId ?? CurrentBranch::id();
+        }
+
+        DB::table('sync_id_mappings')->insert($row);
     }
 
     protected function fullSnapshot(User $user, ?int $branchId): array
@@ -457,7 +505,9 @@ class SyncController extends Controller
 
     protected function productsForBranch(?int $branchId, $sinceAt = null)
     {
-        $branchId = $branchId ?? CurrentBranch::DEFAULT_BRANCH_ID;
+        if (! $branchId) {
+            return collect();
+        }
         $query = Product::query()
             ->visibleToBranch($branchId)
             ->with(['currentBranchStock', 'unit', 'baseUnit']);

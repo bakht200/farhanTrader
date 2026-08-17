@@ -118,7 +118,7 @@
 
         <div class="mt-8 border-t border-gray-200 pt-6">
             <h3 class="text-lg font-semibold mb-2">Stock by Branch</h3>
-            <p class="text-sm text-gray-600 mb-4">Same product across branches with separate quantities.</p>
+            <p class="text-sm text-gray-600 mb-4">Quantities only — prices and other branch settings are hidden.</p>
 
             <div class="overflow-x-auto border border-gray-200 rounded-md">
                 <table class="min-w-full divide-y divide-gray-200">
@@ -150,6 +150,24 @@
                 </table>
             </div>
         </div>
+
+        @if(auth()->user()?->isAdmin() && isset($assignableBranches) && $assignableBranches->isNotEmpty())
+        <div class="mt-8 border-t border-gray-200 pt-6">
+            <h3 class="text-lg font-semibold mb-2">Assign to branches</h3>
+            <form method="POST" action="{{ route('products.assign-branches', $product) }}" class="flex flex-wrap items-end gap-3">
+                @csrf
+                <div>
+                    <label class="block text-sm text-gray-600 mb-1">Branches</label>
+                    <select name="branch_ids[]" multiple class="border border-gray-300 rounded-md min-w-[220px] min-h-[120px]">
+                        @foreach($assignableBranches as $branch)
+                            <option value="{{ $branch->id }}" @selected($branchStocks->contains('id', $branch->id))>{{ $branch->name }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <button type="submit" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md font-medium">Save assignments</button>
+            </form>
+        </div>
+        @endif
     </div>
 </x-app-layout>
 

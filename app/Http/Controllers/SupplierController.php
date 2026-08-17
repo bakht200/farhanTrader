@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\ProductHistory;
 use App\Models\Category;
 use App\Models\Unit;
+use App\Support\BranchRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -592,7 +593,7 @@ class SupplierController extends Controller
             'bill_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240',
             'paid_amount' => 'nullable|numeric|min:0',
             'products' => 'nullable|array',
-            'products.*.product_id' => 'nullable|exists:products,id',
+            'products.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
             'products.*.product_name' => 'required_without:products.*.product_id|string|max:255',
             'products.*.product_sku' => 'nullable|string|max:255',
             'products.*.quantity' => 'required|numeric|min:0.01',
@@ -697,12 +698,8 @@ class SupplierController extends Controller
                         // Use base_unit_id if provided, otherwise use unit_id
                         $baseUnitId = $productData['base_unit_id'] ?? $unitId;
                         
-                        $creator = auth()->user();
-                        $currentBranchId = \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
-                        $ownerBranchId = ($creator && $creator->isAdmin())
-                            ? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID
-                            : (int) ($creator->branch_id ?? $currentBranchId);
-                        $sharedCatalog = (int) $ownerBranchId === \App\Support\CurrentBranch::DEFAULT_BRANCH_ID;
+                        $currentBranchId = \App\Support\CurrentBranch::requireId();
+                        $ownerBranchId = $currentBranchId;
 
                         $product = Product::create([
                             'name' => $productName,
@@ -731,9 +728,9 @@ class SupplierController extends Controller
                         app(\App\Services\BranchStockService::class)->initializeProduct(
                             $product,
                             (float) $quantity,
-                            $sharedCatalog ? $currentBranchId : $ownerBranchId,
+                            $currentBranchId,
                             $sellingType,
-                            $sharedCatalog
+                            false
                         );
                         $productId = $product->id;
                         
@@ -763,7 +760,7 @@ class SupplierController extends Controller
                         
                     } elseif ($productId) {
                         // Update stock quantity for existing product
-                        $product = Product::find($productId);
+                        $product = Product::query()->visibleToBranch()->find($productId);
                         if ($product) {
                             $oldStock = $product->stock_quantity;
                             $oldPrice = $product->purchase_price;
@@ -771,7 +768,7 @@ class SupplierController extends Controller
                             $quantityToAdd = $productData['quantity'] ?? 0;
                             
                             // Update stock quantity (always add/increment) for current branch
-                            $stockBranchId = (int) (\App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID);
+                            $stockBranchId = \App\Support\CurrentBranch::requireId();
                             $newStock = $product->incrementStock((float) $quantityToAdd, $stockBranchId);
                             
                             // Update purchase price (last added price)
@@ -935,7 +932,7 @@ class SupplierController extends Controller
             'reference_number' => 'nullable|string|max:255',
             'bill_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240',
             'products' => 'nullable|array',
-            'products.*.product_id' => 'nullable|exists:products,id',
+            'products.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
             'products.*.product_name' => 'required_without:products.*.product_id|string|max:255',
             'products.*.product_sku' => 'nullable|string|max:255',
             'products.*.quantity' => 'required|numeric|min:0.01',
@@ -1043,14 +1040,14 @@ class SupplierController extends Controller
                 }
 
                 // Apply stock delta once per product: new purchased qty - old purchased qty
-                $billBranchId = (int) ($bill->branch_id ?? \App\Support\CurrentBranch::id() ?? \App\Support\CurrentBranch::DEFAULT_BRANCH_ID);
+                $billBranchId = (int) ($bill->branch_id ?? \App\Support\CurrentBranch::requireId());
                 $productIds = array_unique(array_merge(array_keys($oldQtyByProduct), array_keys($newQtyByProduct)));
                 foreach ($productIds as $productId) {
                     $oldQty = (float) ($oldQtyByProduct[$productId] ?? 0);
                     $newQty = (float) ($newQtyByProduct[$productId] ?? 0);
                     $delta = $newQty - $oldQty;
 
-                    $product = Product::find($productId);
+                    $product = Product::query()->visibleToBranch($billBranchId)->find($productId);
                     if (! $product) {
                         continue;
                     }
