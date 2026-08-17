@@ -125,6 +125,50 @@
             <a href="{{ route('customers.index') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-2 rounded-md">Cancel</a>
         </div>
     </form>
+
+    <script>
+        (function () {
+            const form = document.querySelector('form[action*="customers"]');
+            if (!form) return;
+
+            form.addEventListener('submit', async function (event) {
+                const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+                if (!offline || !window.FTOffline.queueOfflineCustomer) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                const fd = new FormData(form);
+                const payload = {
+                    name: (fd.get('name') || '').toString().trim(),
+                    customer_id: (fd.get('customer_id') || '').toString().trim() || null,
+                    customer_type: (fd.get('customer_type') || '').toString().trim() || null,
+                    email: (fd.get('email') || '').toString().trim() || null,
+                    phone: (fd.get('phone') || '').toString().trim() || null,
+                    address: (fd.get('address') || '').toString().trim() || null,
+                    city: (fd.get('city') || '').toString().trim() || null,
+                    state: (fd.get('state') || '').toString().trim() || null,
+                    country: (fd.get('country') || '').toString().trim() || null,
+                    postal_code: (fd.get('postal_code') || '').toString().trim() || null,
+                    credit_limit: fd.get('credit_limit') || null,
+                };
+
+                if (!payload.name) {
+                    alert('Name is required.');
+                    return;
+                }
+
+                try {
+                    await window.FTOffline.queueOfflineCustomer(payload);
+                    alert('Customer saved offline. It will sync when you are back online.');
+                    window.location.href = '{{ route('customers.index') }}';
+                } catch (e) {
+                    alert(e.message || 'Failed to save customer offline.');
+                }
+            });
+        })();
+    </script>
 </x-app-layout>
 
 

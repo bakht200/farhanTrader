@@ -438,6 +438,48 @@
         let editingCustomProductIndex = null; // Track which custom product is being edited
         const conversionFactorCache = {};
 
+        (async function hydratePosFromOfflineCache() {
+            if (!window.FTOffline || (window.FTOffline.isOnline && window.FTOffline.isOnline())) {
+                return;
+            }
+            try {
+                const cachedProducts = await window.FTOffline.db.products.toArray();
+                if (cachedProducts.length) {
+                    products.splice(0, products.length, ...cachedProducts.map((p) => ({
+                        id: p.id,
+                        name: p.name,
+                        sku: p.sku,
+                        brand: p.brand || '',
+                        purchase_price: p.purchase_price,
+                        selling_price: p.selling_price,
+                        retail_price: p.retail_price ?? p.selling_price,
+                        wholesale_price: p.wholesale_price ?? p.selling_price,
+                        selling_type: p.selling_type || 'retail',
+                        stock_quantity: p.stock_quantity,
+                        unit_id: p.base_unit_id || p.unit_id,
+                        unit_name: p.unit_name || 'Pcs',
+                        base_unit_id: p.base_unit_id || p.unit_id,
+                        selling_units: p.selling_units || [],
+                        image: p.image || null,
+                    })));
+                }
+                const cachedCustomers = await window.FTOffline.db.customers.toArray();
+                if (cachedCustomers.length) {
+                    allCustomers = cachedCustomers.map((c) => ({
+                        id: c.id,
+                        name: c.name,
+                        customer_id: c.customer_id || ('CN-' + String(c.id).padStart(3, '0')),
+                        customer_type: c.customer_type || '',
+                        phone: c.phone || '',
+                        email: c.email || '',
+                        previous_balance: c.unpaid_amount || 0,
+                    }));
+                }
+            } catch (e) {
+                console.warn('Offline POS hydrate failed', e);
+            }
+        })();
+
         function getNumericStockQuantity(item) {
             return parseFloat(item?.stock_quantity) || 0;
         }

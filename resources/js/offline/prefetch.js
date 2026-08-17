@@ -6,6 +6,7 @@
 export const CACHE_NAME = 'ftpos-pages';
 
 export const PRECACHE_ROUTES = [
+    '/',
     '/dashboard',
     '/login',
     '/profile',
@@ -15,8 +16,10 @@ export const PRECACHE_ROUTES = [
     '/categories',
     '/units',
     '/expenses',
+    '/expenses/create',
     '/sales',
     '/sales/pos',
+    '/sales/invoices',
     '/orders',
     '/orders/completed',
     '/orders/pending',
@@ -25,7 +28,14 @@ export const PRECACHE_ROUTES = [
     '/customers/create',
     '/suppliers',
     '/suppliers/create',
+    '/shares',
+    '/reports',
+    '/reports/profit-loss',
+    '/reports/sales-report',
+    '/reports/invoice-report',
     '/branches',
+    '/branches/receipt-settings',
+    '/branches/receipt-settings/edit',
     '/offline.html',
     '/logo.png',
 ];
@@ -121,9 +131,24 @@ export async function prefetchAppShells(urls) {
                         redirect: 'follow',
                         headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
                     });
+                    if (path === '/login') {
+                        try {
+                            const finalPath = new URL(res.url).pathname;
+                            if (!finalPath.includes('login')) {
+                                failed += 1;
+                                return;
+                            }
+                        } catch {
+                            failed += 1;
+                            return;
+                        }
+                    }
                     if (!cache || !(await storePage(cache, path, res))) {
                         failed += 1;
                         return;
+                    }
+                    if (path === '/' && cache) {
+                        await storePage(cache, '/dashboard', res);
                     }
                     ok += 1;
                 } catch {

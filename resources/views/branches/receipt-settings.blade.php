@@ -23,6 +23,11 @@
         </div>
     @endif
 
+    @if(! $branch)
+        <div class="bg-white rounded-lg shadow-sm p-6 text-sm text-gray-700">
+            Select a branch from the switcher before editing receipt settings.
+        </div>
+    @else
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
         <div class="bg-white rounded-lg shadow-sm p-6">
             <h3 class="text-base font-semibold text-gray-800 mb-1">Receipt / Print Header</h3>
@@ -352,4 +357,5 @@
         });
     })();
     </script>
+    @endif
 </x-app-layout>

@@ -120,5 +120,43 @@
             </div>
         </form>
     </div>
+
+    <script>
+        (function () {
+            const form = document.querySelector('form[action*="expenses"]');
+            if (!form) return;
+
+            form.addEventListener('submit', async function (event) {
+                const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
+                if (!offline || !window.FTOffline.queueOfflineExpense) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                const fd = new FormData(form);
+                const payload = {
+                    name: (fd.get('name') || '').toString().trim(),
+                    expense_date: (fd.get('expense_date') || '').toString(),
+                    amount: fd.get('amount'),
+                    category: (fd.get('category') || '').toString().trim() || null,
+                    description: (fd.get('description') || '').toString().trim() || null,
+                };
+
+                if (!payload.name || !payload.amount) {
+                    alert('Expense name and amount are required.');
+                    return;
+                }
+
+                try {
+                    await window.FTOffline.queueOfflineExpense(payload);
+                    alert('Expense saved offline. It will sync when you are back online.');
+                    window.location.href = '{{ route('expenses.index') }}';
+                } catch (e) {
+                    alert(e.message || 'Failed to save expense offline.');
+                }
+            });
+        })();
+    </script>
 </x-app-layout>
 

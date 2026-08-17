@@ -87,6 +87,13 @@ async function matchNavigation(request) {
   if (globalHit) {
     return globalHit;
   }
+  if (url.pathname === '/' || url.pathname === '') {
+    const dash = await cache.match('/dashboard', { ignoreSearch: true })
+      || await cache.match(new URL('/dashboard', self.location.origin).href);
+    if (dash) {
+      return dash;
+    }
+  }
   return cache.match('/offline.html');
 }
 

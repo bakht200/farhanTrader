@@ -33,9 +33,32 @@ class POSController extends Controller
     {
         $categoryId = $request->get('category_id', 'all');
         $search = $request->get('search', '');
+        $branchId = CurrentBranch::id();
+
+        if (! $branchId) {
+            $products = collect();
+            $categories = Category::where('is_active', true)->withCount('products')->get();
+            $customers = collect();
+            $customerTypesForPos = collect();
+            $units = Unit::where('is_active', true)->get();
+            $editOrderData = null;
+            $editOrderId = $request->get('edit_order_id');
+
+            return view('pos.index', compact(
+                'products',
+                'categories',
+                'customers',
+                'customerTypesForPos',
+                'units',
+                'categoryId',
+                'search',
+                'editOrderData',
+                'editOrderId'
+            ));
+        }
 
         $query = Product::where('is_active', true)
-            ->visibleToBranch(CurrentBranch::requireId())
+            ->visibleToBranch($branchId)
             ->with(['category', 'unit', 'productUnits.unit', 'currentBranchStock']);
 
         // Category filter

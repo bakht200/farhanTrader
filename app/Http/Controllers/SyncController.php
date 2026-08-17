@@ -58,7 +58,7 @@ class SyncController extends Controller
     public function bootstrap(Request $request)
     {
         $user = $request->user();
-        $branchId = CurrentBranch::id($user);
+        $branchId = $this->snapshotBranchId($user);
 
         return response()->json($this->fullSnapshot($user, $branchId));
     }
@@ -66,7 +66,7 @@ class SyncController extends Controller
     public function pull(Request $request)
     {
         $user = $request->user();
-        $branchId = CurrentBranch::id($user);
+        $branchId = $this->snapshotBranchId($user);
         $since = $request->query('since');
 
         // Simple strategy: if since is missing/stale, return full snapshot.
@@ -544,6 +544,21 @@ class SyncController extends Controller
                     ?: ($attrs['selling_type'] ?? 'retail'),
             ]);
         });
+    }
+
+    protected function snapshotBranchId(User $user): ?int
+    {
+        $branchId = CurrentBranch::id($user);
+        if ($branchId) {
+            return $branchId;
+        }
+
+        // Admin with no switcher selection still needs a Phandu catalog for offline POS.
+        if ($user->isAdmin()) {
+            return CurrentBranch::DEFAULT_BRANCH_ID;
+        }
+
+        return null;
     }
 
     protected function userPayload(User $user): array

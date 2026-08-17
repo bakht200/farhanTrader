@@ -1034,7 +1034,15 @@ class ProductController extends Controller
     public function lowStocks(Request $request)
     {
         $tab = $request->get('tab', 'low-stocks'); // 'low-stocks' or 'out-of-stocks'
-        $branchId = CurrentBranch::requireId();
+        $branchId = CurrentBranch::id();
+
+        if (! $branchId) {
+            $products = Product::query()->whereRaw('0 = 1')->paginate($request->get('per_page', 10));
+            $categories = Category::where('is_active', true)->orderBy('name')->get();
+            $brands = collect();
+
+            return view('products.low-stocks', compact('products', 'categories', 'brands', 'tab'));
+        }
 
         $query = Product::with('category', 'unit', 'createdBy', 'currentBranchStock')
             ->visibleToBranch($branchId)

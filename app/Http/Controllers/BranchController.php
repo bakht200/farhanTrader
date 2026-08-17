@@ -149,15 +149,10 @@ class BranchController extends Controller
     /**
      * Page for any branch user (or admin on active branch) to edit receipt header.
      */
-    public function editReceiptSettings(): View|RedirectResponse
+    public function editReceiptSettings(): View
     {
-        $branch = CurrentBranch::get();
-        if (! $branch) {
-            return redirect()->route('dashboard')->with('error', 'No active branch.');
-        }
-
         return view('branches.receipt-settings', [
-            'branch' => $branch,
+            'branch' => CurrentBranch::get(),
         ]);
     }
 
