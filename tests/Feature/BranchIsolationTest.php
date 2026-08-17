@@ -236,6 +236,15 @@ class BranchIsolationTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_admin_can_open_dashboard_without_selected_branch(): void
+    {
+        $admin = User::factory()->admin()->create(['is_active' => true]);
+
+        $this->actingAs($admin);
+        $this->from('/')->get('/')->assertRedirect(route('dashboard'));
+        $this->from('/')->get(route('dashboard'))->assertOk();
+    }
+
     public function test_admin_switch_mutates_only_selected_branch(): void
     {
         $branchA = $this->makeBranch('Admin A');

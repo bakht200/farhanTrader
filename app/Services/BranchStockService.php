@@ -318,9 +318,18 @@ class BranchStockService
 
     public function sumForBranch(?int $branchId = null): float
     {
-        return (float) BranchProductStock::query()
-            ->where('branch_id', $this->branchId($branchId))
-            ->sum('stock_quantity');
+        $resolved = $branchId ?? CurrentBranch::id();
+        $query = BranchProductStock::query();
+
+        if ($resolved) {
+            return (float) $query->where('branch_id', $resolved)->sum('stock_quantity');
+        }
+
+        if (Auth::user()?->isAdmin()) {
+            return (float) $query->sum('stock_quantity');
+        }
+
+        throw new MissingBranchContextException();
     }
 
     private function defaultSellingType(Product|int $product, int $productId, string $fallback = 'both'): string

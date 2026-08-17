@@ -40,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 403);
             }
 
-            return redirect()->back()->with('error', $e->getMessage());
+            // Never redirect()->back() here: / → dashboard → back to / loops the browser.
+            abort(403, $e->getMessage());
         });
     })->create();
