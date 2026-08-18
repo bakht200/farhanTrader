@@ -388,4 +388,180 @@ class BranchIsolationTest extends TestCase
         ])->assertFailed();
         $this->assertDatabaseHas('sales', ['sale_number' => 'SALE-KEEP1']);
     }
+
+    public function test_branch_user_cannot_change_phandu_catalog_product_name_or_price(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'wholesale_price' => 3250,
+            'selling_type' => 'both',
+        ], 100);
+
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'stock_quantity' => 6,
+            'selling_type' => 'both',
+        ]);
+
+        $this->actingAs($ashrafUser);
+        $this->put(route('products.update', $product), $this->branchProductEditPayload([
+            'name' => 'MEETA SODA HACKED',
+            'purchase_price' => 1,
+            'retail_price' => 2,
+            'wholesale_price' => 2,
+            'selling_price' => 2,
+            'stock_quantity' => 6,
+            'selling_type' => 'both',
+        ]))->assertRedirect(route('products.index'));
+
+        $product->refresh();
+        $this->assertSame('MEETA SODA', $product->getAttributes()['name']);
+        $this->assertEquals(3070.0, (float) $product->getAttributes()['purchase_price']);
+        $this->assertEquals(4000.0, (float) $product->getAttributes()['retail_price']);
+
+        $override = BranchProductStock::query()
+            ->where('branch_id', $ashraf->id)
+            ->where('product_id', $product->id)
+            ->first();
+        $this->assertSame('MEETA SODA HACKED', $override->display_name);
+        $this->assertEquals(1.0, (float) $override->purchase_price);
+        $this->assertEquals(2.0, (float) $override->retail_price);
+    }
+
+    public function test_sole_membership_on_phandu_catalog_still_does_not_write_master(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+        ], 100);
+
+        BranchProductStock::query()
+            ->where('product_id', $product->id)
+            ->where('branch_id', $phandu->id)
+            ->delete();
+
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'stock_quantity' => 6,
+            'selling_type' => 'retail',
+        ]);
+
+        $this->assertSame(1, $product->branchStocks()->count());
+        $this->assertTrue($product->isPhanduCatalog());
+
+        $this->actingAs($ashrafUser);
+        $this->put(route('products.update', $product), $this->branchProductEditPayload([
+            'name' => 'BRANCH ONLY NAME',
+            'purchase_price' => 99,
+            'retail_price' => 120,
+            'selling_price' => 120,
+            'stock_quantity' => 6,
+        ]))->assertRedirect(route('products.index'));
+
+        $this->assertSame('MEETA SODA', $product->fresh()->getAttributes()['name']);
+        $this->assertDatabaseHas('branch_product_stocks', [
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'display_name' => 'BRANCH ONLY NAME',
+        ]);
+    }
+
+    public function test_branch_user_can_still_rename_their_own_exclusive_product(): void
+    {
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $product = $this->makeProductForBranch($ashraf, [
+            'name' => 'Local Soda',
+            'purchase_price' => 10,
+            'retail_price' => 20,
+            'selling_price' => 20,
+            'selling_type' => 'retail',
+        ], 5);
+
+        $this->actingAs($ashrafUser);
+        $this->put(route('products.update', $product), $this->masterProductEditPayload($product, [
+            'name' => 'Local Soda Renamed',
+            'stock_quantity' => 5,
+        ]))->assertRedirect();
+
+        $this->assertSame('Local Soda Renamed', $product->fresh()->getAttributes()['name']);
+    }
+
+    public function test_admin_can_still_update_phandu_catalog_master(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $admin = $this->makeAdmin($phandu);
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+        ], 100);
+
+        $this->actingAs($admin);
+        CurrentBranch::setActive($phandu->id);
+        $this->put(route('products.update', $product), $this->masterProductEditPayload($product, [
+            'name' => 'MEETA SODA (1*25KG)',
+            'purchase_price' => 3300,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'stock_quantity' => 100,
+        ]))->assertRedirect();
+
+        $fresh = $product->fresh();
+        $this->assertSame('MEETA SODA (1*25KG)', $fresh->getAttributes()['name']);
+        $this->assertEquals(3300.0, (float) $fresh->getAttributes()['purchase_price']);
+    }
+
+    protected function branchProductEditPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'name' => 'Renamed',
+            'selling_type' => 'retail',
+            'purchase_price' => 10,
+            'retail_price' => 15,
+            'wholesale_price' => 12,
+            'selling_price' => 15,
+            'stock_quantity' => 1,
+        ], $overrides);
+    }
+
+    protected function masterProductEditPayload(\App\Models\Product $product, array $overrides = []): array
+    {
+        $attrs = $product->getAttributes();
+
+        return array_merge([
+            'name' => $attrs['name'],
+            'slug' => $attrs['slug'] ?? null,
+            'sku' => $attrs['sku'] ?? null,
+            'category_id' => $attrs['category_id'],
+            'unit_id' => $attrs['unit_id'],
+            'base_unit_id' => $attrs['base_unit_id'] ?? $attrs['unit_id'],
+            'product_type' => $attrs['product_type'] ?? 'single',
+            'selling_type' => $attrs['selling_type'] ?? 'retail',
+            'purchase_price' => $attrs['purchase_price'],
+            'retail_price' => $attrs['retail_price'],
+            'wholesale_price' => $attrs['wholesale_price'] ?? $attrs['retail_price'],
+            'selling_price' => $attrs['selling_price'] ?? $attrs['retail_price'],
+            'low_stock_threshold' => $attrs['low_stock_threshold'] ?? 5,
+            'stock_quantity' => 10,
+        ], $overrides);
+    }
 }

@@ -10,6 +10,7 @@ use App\Models\Product;
 use App\Models\ProductHistory;
 use App\Models\Category;
 use App\Models\Unit;
+use App\Services\BranchStockService;
 use App\Support\BranchRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -774,7 +775,13 @@ class SupplierController extends Controller
                             // Update purchase price (last added price)
                             $priceUpdated = false;
                             if (isset($productData['unit_price']) && $productData['unit_price'] != $oldPrice) {
-                                $product->update(['purchase_price' => $newPrice]);
+                                if ($product->writesMasterForCurrentBranch()) {
+                                    $product->update(['purchase_price' => $newPrice]);
+                                } else {
+                                    app(BranchStockService::class)->setOverrides($product, [
+                                        'purchase_price' => $newPrice,
+                                    ], $stockBranchId);
+                                }
                                 $priceUpdated = true;
                             }
                             

@@ -108,9 +108,18 @@ class Product extends Model
     public function isSharedCatalog(): bool
     {
         if (CurrentBranch::strictIsolation()) {
-            return $this->branchStocks()->count() > 1;
+            return $this->branchStocks()->count() > 1 || $this->isPhanduCatalog();
         }
 
+        return $this->isPhanduCatalog();
+    }
+
+    /**
+     * Phandu / legacy-null owner: the admin catalog identity. Branch users must
+     * never write this master row — only branch_product_stocks overrides.
+     */
+    public function isPhanduCatalog(): bool
+    {
         $owner = $this->owner_branch_id;
 
         return $owner === null || (int) $owner === CurrentBranch::DEFAULT_BRANCH_ID;
@@ -164,6 +173,10 @@ class Product extends Model
 
     /**
      * Whether saving should update the master products row (vs branch overrides only).
+     *
+     * Non-admins never write Phandu/admin catalog identity — even when this
+     * branch currently holds the only stock row. They own exclusive products
+     * only when owner_branch_id is their branch.
      */
     public function writesMasterForCurrentBranch(?int $branchId = null): bool
     {
@@ -173,15 +186,28 @@ class Product extends Model
             return false;
         }
 
-        if (! $this->isAssignedToBranch($branchId) && ! CurrentBranch::strictIsolation()) {
-            if (! $this->isSharedCatalog() && $this->isOwnedByBranch($branchId)) {
+        $user = auth()->user();
+        $isAdmin = $user && $user->isAdmin();
+
+        if (! $this->isAssignedToBranch($branchId)) {
+            if (CurrentBranch::strictIsolation()) {
+                return false;
+            }
+
+            if (! $this->isPhanduCatalog() && $this->isOwnedByBranch($branchId)) {
                 return true;
             }
 
-            return $this->isSharedCatalog() && (int) $branchId === CurrentBranch::DEFAULT_BRANCH_ID;
+            return $isAdmin
+                && $this->isPhanduCatalog()
+                && (int) $branchId === CurrentBranch::DEFAULT_BRANCH_ID;
         }
 
-        if (! $this->isAssignedToBranch($branchId)) {
+        if ($isAdmin) {
+            return true;
+        }
+
+        if ($this->isPhanduCatalog()) {
             return false;
         }
 
@@ -189,13 +215,7 @@ class Product extends Model
             ? $this->branchStocks->count()
             : $this->branchStocks()->count();
 
-        if ($membershipCount <= 1) {
-            return true;
-        }
-
-        $user = auth()->user();
-
-        return $user && $user->isAdmin();
+        return $membershipCount <= 1 && (int) $this->owner_branch_id === (int) $branchId;
     }
 
     protected function branchOverrideValue(string $column): mixed
