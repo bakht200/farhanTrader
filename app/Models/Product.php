@@ -105,6 +105,42 @@ class Product extends Model
         return $this->branchStocks()->where('branch_id', $branchId)->exists();
     }
 
+    /**
+     * Products a branch may put on a supplier bill: already stocked, owned by
+     * this branch (including wipe orphans), or Phandu catalog (assign on buy).
+     */
+    public function isPurchasableByCurrentBranch(?int $branchId = null): bool
+    {
+        $branchId = $branchId ?? CurrentBranch::id();
+        if (! $branchId) {
+            return false;
+        }
+
+        if ($this->isAssignedToBranch($branchId)) {
+            return true;
+        }
+
+        if ((int) $this->owner_branch_id === (int) $branchId) {
+            return true;
+        }
+
+        return $this->isPhanduCatalog();
+    }
+
+    public function scopePurchasableOnBill(Builder $query, ?int $branchId = null): Builder
+    {
+        $branchId = $branchId ?? CurrentBranch::id();
+        if (! $branchId) {
+            return $query->whereRaw('0 = 1');
+        }
+
+        return $query->where(function (Builder $q) use ($branchId) {
+            $q->whereHas('branchStocks', function (Builder $stocks) use ($branchId) {
+                $stocks->where('branch_id', $branchId);
+            })->orWhere('owner_branch_id', $branchId);
+        });
+    }
+
     public function isSharedCatalog(): bool
     {
         if (CurrentBranch::strictIsolation()) {

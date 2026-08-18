@@ -146,6 +146,21 @@ class WipeBranchOperationalData extends Command
             return 0;
         }
 
+        if ($table === 'branch_product_stocks'
+            && Schema::hasTable('products')
+            && Schema::hasColumn('products', 'owner_branch_id')
+        ) {
+            return (int) DB::table($table)
+                ->whereIn('branch_id', $ids)
+                ->whereNotExists(function ($query) {
+                    $query->select(DB::raw(1))
+                        ->from('products')
+                        ->whereColumn('products.id', 'branch_product_stocks.product_id')
+                        ->whereColumn('products.owner_branch_id', 'branch_product_stocks.branch_id');
+                })
+                ->delete();
+        }
+
         return (int) DB::table($table)->whereIn('branch_id', $ids)->delete();
     }
 

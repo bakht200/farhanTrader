@@ -8,10 +8,11 @@ use App\Models\SupplierBill;
 use App\Models\SupplierBillItem;
 use App\Models\Product;
 use App\Models\ProductHistory;
+use App\Models\ProductUnit;
 use App\Models\Category;
 use App\Models\Unit;
 use App\Services\BranchStockService;
-use App\Support\BranchRules;
+use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -359,10 +360,14 @@ class SupplierController extends Controller
 
     public function show(Supplier $supplier)
     {
-        $products = \App\Models\Product::where(function($q) use ($supplier) {
-            $q->where('supplier_id', $supplier->id)
-              ->orWhere('supplier_name', $supplier->name);
-        })->with('currentBranchStock')->get();
+        $products = Product::query()
+            ->where(function ($q) use ($supplier) {
+                $q->where('supplier_id', $supplier->id)
+                    ->orWhere('supplier_name', $supplier->name);
+            })
+            ->purchasableOnBill()
+            ->with('currentBranchStock')
+            ->get();
 
         $supplier->products = $products;
         $supplier->total_price = $products->sum(function($product) {
@@ -568,10 +573,7 @@ class SupplierController extends Controller
             return $bill->remaining > 0;
         });
         
-        // Get products with their base units and selling units
-        $products = Product::where('is_active', true)
-            ->with(['unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock'])
-            ->get();
+        $products = $this->billFormProducts();
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
         
@@ -594,7 +596,7 @@ class SupplierController extends Controller
             'bill_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240',
             'paid_amount' => 'nullable|numeric|min:0',
             'products' => 'nullable|array',
-            'products.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
+            'products.*.product_id' => 'nullable|integer',
             'products.*.product_name' => 'required_without:products.*.product_id|string|max:255',
             'products.*.product_sku' => 'nullable|string|max:255',
             'products.*.quantity' => 'required|numeric|min:0.01',
@@ -644,175 +646,49 @@ class SupplierController extends Controller
                 'bill_number' => $validated['bill_number'] ?? null,
                 'bill_amount' => $billAmount,
                 'bill_date' => $validated['bill_date'] ?? $validated['transaction_date'],
-                'description' => $validated['description'],
-                'reference_number' => $validated['reference_number'],
+                'description' => $validated['description'] ?? null,
+                'reference_number' => $validated['reference_number'] ?? null,
                 'bill_image' => $billImagePath,
             ]);
             
             // Add products to bill if provided
             if (!empty($request->products)) {
                 foreach ($request->products as $productData) {
-                    $productId = $productData['product_id'] ?? null;
-                    $productName = $productData['product_name'] ?? '';
-                    $productSku = $productData['product_sku'] ?? null;
-                    
-                    // If product_id is not provided but product_name is, create the product
-                    if (!$productId && !empty($productName)) {
-                        // Get or create category
-                        $categoryId = $productData['category_id'] ?? Category::first()?->id;
-                        if (!$categoryId) {
-                            $categoryId = Category::create([
-                                'name' => 'Uncategorized',
-                                'slug' => Str::slug('Uncategorized'),
-                                'is_active' => true
-                            ])->id;
-                        }
-                        
-                        // Get or create unit
-                        $unitId = $productData['unit_id'] ?? Unit::first()?->id;
-                        if (!$unitId) {
-                            $unitId = Unit::create([
-                                'name' => 'Piece',
-                                'short_name' => 'Pc',
-                                'is_active' => true
-                            ])->id;
-                        }
-                        
-                        // Create product
-                        $purchasePrice = $productData['unit_price'] ?? 0;
-                        $quantity = $productData['quantity'] ?? 0;
-                        $sellingType = $productData['selling_type'] ?? 'both';
-                        $retailPrice = $productData['retail_price'] ?? $purchasePrice;
-                        $wholesalePrice = $productData['wholesale_price'] ?? $purchasePrice;
-                        
-                        // Set selling_price based on selling_type
-                        $sellingPrice = $purchasePrice;
-                        if ($sellingType === 'retail') {
-                            $sellingPrice = $retailPrice;
-                        } elseif ($sellingType === 'wholesale') {
-                            $sellingPrice = $wholesalePrice;
-                        } elseif ($sellingType === 'both') {
-                            // For 'both', use retail price as default selling price
-                            $sellingPrice = $retailPrice > 0 ? $retailPrice : $wholesalePrice;
-                        }
-                        
-                        // Use base_unit_id if provided, otherwise use unit_id
-                        $baseUnitId = $productData['base_unit_id'] ?? $unitId;
-                        
-                        $currentBranchId = \App\Support\CurrentBranch::requireId();
-                        $ownerBranchId = $currentBranchId;
+                    $resolved = $this->resolveBillProduct($productData, $supplier);
+                    $product = $resolved['product'];
+                    $created = $resolved['created'];
+                    $quantityToAdd = (float) ($productData['quantity'] ?? 0);
+                    $purchasePrice = (float) ($productData['unit_price'] ?? 0);
+                    $stockBranchId = CurrentBranch::requireId();
+                    $oldStock = $product->currentStock($stockBranchId);
+                    $oldPrice = (float) ($product->getAttributes()['purchase_price'] ?? 0);
+                    $newStock = $quantityToAdd > 0
+                        ? $product->incrementStock($quantityToAdd, $stockBranchId)
+                        : $oldStock;
 
-                        $product = Product::create([
-                            'name' => $productName,
-                            'slug' => Str::slug($productName . '-' . uniqid()),
-                            'sku' => $productSku ?? $this->generateSku($productName),
-                            'category_id' => $categoryId,
-                            'unit_id' => $unitId,
-                            'base_unit_id' => $baseUnitId,
-                            'supplier_id' => $supplier->id,
-                            'supplier_name' => $supplier->name,
-                            'purchase_price' => $purchasePrice,
-                            'selling_price' => $sellingPrice,
-                            'retail_price' => $retailPrice,
-                            'wholesale_price' => $wholesalePrice,
-                            'stock_quantity' => 0,
-                            'low_stock_threshold' => 10,
-                            'selling_type' => $sellingType,
-                            'product_type' => 'single',
-                            'is_active' => true,
-                            'user_id' => auth()->id(),
-                            'owner_branch_id' => $ownerBranchId,
-                        ]);
-                        if ((int) ($product->getAttributes()['owner_branch_id'] ?? 0) !== (int) $ownerBranchId) {
-                            $product->forceFill(['owner_branch_id' => $ownerBranchId])->save();
-                        }
-                        app(\App\Services\BranchStockService::class)->initializeProduct(
-                            $product,
-                            (float) $quantity,
-                            $currentBranchId,
-                            $sellingType,
-                            false
-                        );
-                        $productId = $product->id;
-                        
-                        // Create ProductUnit for the base unit
-                        \App\Models\ProductUnit::create([
-                            'product_id' => $product->id,
-                            'unit_id' => $baseUnitId,
-                            'is_base_unit' => true,
-                            'selling_price' => $sellingPrice,
-                            'is_active' => true,
-                        ]);
-                        
-                        // Log product creation history
-                        ProductHistory::create([
-                            'product_id' => $productId,
-                            'supplier_id' => $supplier->id,
-                            'supplier_bill_id' => $bill->id,
-                            'type' => 'created',
-                            'quantity_added' => $quantity,
-                            'old_price' => null,
-                            'new_price' => $purchasePrice,
-                            'old_stock_quantity' => 0,
-                            'new_stock_quantity' => $quantity,
-                            'notes' => 'Product created from supplier bill',
-                            'transaction_date' => $validated['bill_date'] ?? $validated['transaction_date'],
-                        ]);
-                        
-                    } elseif ($productId) {
-                        // Update stock quantity for existing product
-                        $product = Product::query()->visibleToBranch()->find($productId);
-                        if ($product) {
-                            $oldStock = $product->stock_quantity;
-                            $oldPrice = $product->purchase_price;
-                            $newPrice = $productData['unit_price'] ?? $oldPrice;
-                            $quantityToAdd = $productData['quantity'] ?? 0;
-                            
-                            // Update stock quantity (always add/increment) for current branch
-                            $stockBranchId = \App\Support\CurrentBranch::requireId();
-                            $newStock = $product->incrementStock((float) $quantityToAdd, $stockBranchId);
-                            
-                            // Update purchase price (last added price)
-                            $priceUpdated = false;
-                            if (isset($productData['unit_price']) && $productData['unit_price'] != $oldPrice) {
-                                if ($product->writesMasterForCurrentBranch()) {
-                                    $product->update(['purchase_price' => $newPrice]);
-                                } else {
-                                    app(BranchStockService::class)->setOverrides($product, [
-                                        'purchase_price' => $newPrice,
-                                    ], $stockBranchId);
-                                }
-                                $priceUpdated = true;
-                            }
-                            
-                            // Log product history
-                            $historyType = ($quantityToAdd > 0 && $priceUpdated) ? 'quantity_and_price_updated' : 
-                                         ($quantityToAdd > 0 ? 'quantity_added' : 'price_updated');
-                            
-                            ProductHistory::create([
-                                'product_id' => $productId,
-                                'supplier_id' => $supplier->id,
-                                'supplier_bill_id' => $bill->id,
-                                'type' => $historyType,
-                                'quantity_added' => $quantityToAdd,
-                                'old_price' => $oldPrice,
-                                'new_price' => $newPrice,
-                                'old_stock_quantity' => $oldStock,
-                                'new_stock_quantity' => $newStock,
-                                'notes' => "Updated from supplier bill #{$bill->bill_number}",
-                                'transaction_date' => $validated['bill_date'] ?? $validated['transaction_date'],
-                            ]);
-                        }
-                    }
-                    
-                    // Create bill item
+                    ProductHistory::create([
+                        'product_id' => $product->id,
+                        'supplier_id' => $supplier->id,
+                        'supplier_bill_id' => $bill->id,
+                        'type' => $created ? 'created' : ($quantityToAdd > 0 ? 'quantity_added' : 'price_updated'),
+                        'quantity_added' => $quantityToAdd,
+                        'old_price' => $created ? null : $oldPrice,
+                        'new_price' => $purchasePrice,
+                        'old_stock_quantity' => $created ? 0 : $oldStock,
+                        'new_stock_quantity' => $newStock,
+                        'notes' => $created
+                            ? 'Product created from supplier bill'
+                            : "Updated from supplier bill #{$bill->bill_number}",
+                        'transaction_date' => $validated['bill_date'] ?? $validated['transaction_date'],
+                    ]);
+
                     SupplierBillItem::create([
                         'supplier_bill_id' => $bill->id,
-                        'product_id' => $productId,
-                        'product_name' => $productName,
-                        'product_sku' => $productSku,
-                        'quantity' => $productData['quantity'] ?? 0,
-                        'unit_price' => $productData['unit_price'] ?? 0,
+                        'product_id' => $product->id,
+                        'product_name' => $productData['product_name'] ?? $product->name,
+                        'product_sku' => $productData['product_sku'] ?? $product->sku,
+                        'quantity' => $quantityToAdd,
+                        'unit_price' => $purchasePrice,
                         'discount' => $productData['discount'] ?? 0,
                         'tax' => $productData['tax'] ?? 0,
                         'total' => $productData['total'] ?? 0,
@@ -838,7 +714,7 @@ class SupplierController extends Controller
                     'amount' => $validated['paid_amount'],
                     'description' => $validated['description'] ?? 'Payment for bill #' . ($bill->bill_number ?? $bill->id),
                     'transaction_date' => $validated['transaction_date'],
-                    'reference_number' => $validated['reference_number'],
+                    'reference_number' => $validated['reference_number'] ?? null,
                     'supplier_bill_id' => $bill->id,
                 ]);
             }
@@ -912,7 +788,7 @@ class SupplierController extends Controller
         $bill->load('items');
         
         // Get products, categories, and units for product selection
-        $products = Product::where('is_active', true)->with('unit')->get();
+        $products = $this->billFormProducts();
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
         
@@ -939,7 +815,7 @@ class SupplierController extends Controller
             'reference_number' => 'nullable|string|max:255',
             'bill_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:10240',
             'products' => 'nullable|array',
-            'products.*.product_id' => ['nullable', 'integer', BranchRules::existsVisibleProduct()],
+            'products.*.product_id' => 'nullable|integer',
             'products.*.product_name' => 'required_without:products.*.product_id|string|max:255',
             'products.*.product_sku' => 'nullable|string|max:255',
             'products.*.quantity' => 'required|numeric|min:0.01',
@@ -1014,8 +890,8 @@ class SupplierController extends Controller
                 'bill_number' => $validated['bill_number'] ?? null,
                 'bill_amount' => $billAmount,
                 'bill_date' => $validated['bill_date'],
-                'description' => $validated['description'],
-                'reference_number' => $validated['reference_number'],
+                'description' => $validated['description'] ?? null,
+                'reference_number' => $validated['reference_number'] ?? null,
                 'bill_image' => $billImagePath,
             ]);
             
@@ -1026,14 +902,16 @@ class SupplierController extends Controller
                 $bill->items()->delete();
                 
                 foreach ($productRows as $productData) {
-                    $productId = ! empty($productData['product_id']) ? (int) $productData['product_id'] : null;
+                    $resolved = $this->resolveBillProduct($productData, $supplier);
+                    $product = $resolved['product'];
+                    $productId = (int) $product->id;
                     $quantity = (float) ($productData['quantity'] ?? 0);
 
                     SupplierBillItem::create([
                         'supplier_bill_id' => $bill->id,
                         'product_id' => $productId,
-                        'product_name' => $productData['product_name'] ?? '',
-                        'product_sku' => $productData['product_sku'] ?? null,
+                        'product_name' => $productData['product_name'] ?? $product->name,
+                        'product_sku' => $productData['product_sku'] ?? $product->sku,
                         'quantity' => $quantity,
                         'unit_price' => $productData['unit_price'] ?? 0,
                         'discount' => $productData['discount'] ?? 0,
@@ -1041,21 +919,21 @@ class SupplierController extends Controller
                         'total' => $productData['total'] ?? 0,
                     ]);
 
-                    if ($productId && $quantity > 0) {
+                    if ($quantity > 0) {
                         $newQtyByProduct[$productId] = ($newQtyByProduct[$productId] ?? 0) + $quantity;
                     }
                 }
 
                 // Apply stock delta once per product: new purchased qty - old purchased qty
-                $billBranchId = (int) ($bill->branch_id ?? \App\Support\CurrentBranch::requireId());
+                $billBranchId = (int) ($bill->branch_id ?? CurrentBranch::requireId());
                 $productIds = array_unique(array_merge(array_keys($oldQtyByProduct), array_keys($newQtyByProduct)));
                 foreach ($productIds as $productId) {
                     $oldQty = (float) ($oldQtyByProduct[$productId] ?? 0);
                     $newQty = (float) ($newQtyByProduct[$productId] ?? 0);
                     $delta = $newQty - $oldQty;
 
-                    $product = Product::query()->visibleToBranch($billBranchId)->find($productId);
-                    if (! $product) {
+                    $product = Product::query()->find($productId);
+                    if (! $product || ! $product->isPurchasableByCurrentBranch($billBranchId)) {
                         continue;
                     }
 
@@ -1066,7 +944,7 @@ class SupplierController extends Controller
                             ->where('supplier_bill_id', $bill->id)
                             ->where('product_id', $productId)
                             ->exists();
-                        $currentStock = app(\App\Services\BranchStockService::class)->get($product, $billBranchId);
+                        $currentStock = app(BranchStockService::class)->get($product, $billBranchId);
                         if (! $hasHistory && $currentStock < 0.000001) {
                             $delta = $newQty;
                         }
@@ -1076,7 +954,7 @@ class SupplierController extends Controller
                         continue;
                     }
 
-                    $stockBefore = app(\App\Services\BranchStockService::class)->get($product, $billBranchId);
+                    $stockBefore = app(BranchStockService::class)->get($product, $billBranchId);
 
                     if ($delta > 0) {
                         $stockAfter = $product->incrementStock($delta, $billBranchId);
@@ -1120,7 +998,7 @@ class SupplierController extends Controller
                 }
                 
                 // Update description if changed
-                if ($validated['description'] && $creditTransaction->description !== $validated['description']) {
+                if (($validated['description'] ?? null) && $creditTransaction->description !== $validated['description']) {
                     $updateData['description'] = $validated['description'];
                 }
                 
@@ -1232,6 +1110,210 @@ class SupplierController extends Controller
     {
         $supplier->delete();
         return redirect()->route('suppliers.index')->with('success', 'Supplier deleted successfully.');
+    }
+
+    /**
+     * Products the bill form may autocomplete: this branch's membership or
+     * products it owns (including wipe orphans). Phandu catalog is not listed;
+     * typing a new name creates a branch-owned product.
+     */
+    private function billFormProducts()
+    {
+        return Product::query()
+            ->where('is_active', true)
+            ->purchasableOnBill()
+            ->with(['unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock'])
+            ->orderBy('name')
+            ->get();
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     * @return array{product: Product, created: bool}
+     */
+    private function resolveBillProduct(array $productData, Supplier $supplier): array
+    {
+        $productId = ! empty($productData['product_id']) ? (int) $productData['product_id'] : null;
+        $productName = trim((string) ($productData['product_name'] ?? ''));
+        $product = $productId ? Product::query()->find($productId) : null;
+
+        if ($product && ! $product->isPurchasableByCurrentBranch()) {
+            $product = null;
+        }
+
+        if ($product) {
+            $branchId = CurrentBranch::requireId();
+            app(BranchStockService::class)->ensureMembership($product, $branchId);
+            $this->syncBillProductPricing($product, $productData, $supplier, $branchId);
+
+            return ['product' => $product->fresh() ?? $product, 'created' => false];
+        }
+
+        if ($productName === '') {
+            throw new \InvalidArgumentException('Product name is required when adding a product from a supplier bill.');
+        }
+
+        return ['product' => $this->createProductFromBillLine($productData, $supplier), 'created' => true];
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     */
+    private function createProductFromBillLine(array $productData, Supplier $supplier): Product
+    {
+        $productName = trim((string) $productData['product_name']);
+        $productSku = $productData['product_sku'] ?? null;
+
+        $categoryId = $productData['category_id'] ?? Category::query()->value('id');
+        if (! $categoryId) {
+            $categoryId = Category::query()->create([
+                'name' => 'Uncategorized',
+                'slug' => Str::slug('Uncategorized'),
+                'is_active' => true,
+            ])->id;
+        }
+
+        $unitId = $productData['unit_id'] ?? Unit::query()->value('id');
+        if (! $unitId) {
+            $unitId = Unit::query()->create([
+                'name' => 'Piece',
+                'short_name' => 'Pc',
+                'is_active' => true,
+            ])->id;
+        }
+
+        $purchasePrice = (float) ($productData['unit_price'] ?? 0);
+        $sellingType = $productData['selling_type'] ?? 'both';
+        [$retailPrice, $wholesalePrice, $sellingPrice] = $this->billLineSellingPrices($productData, $purchasePrice, $sellingType);
+        $baseUnitId = $productData['base_unit_id'] ?? $unitId;
+        $currentBranchId = CurrentBranch::requireId();
+
+        $product = Product::query()->create([
+            'name' => $productName,
+            'slug' => Str::slug($productName.'-'.uniqid()),
+            'sku' => $productSku ?: $this->generateSku($productName),
+            'category_id' => $categoryId,
+            'unit_id' => $unitId,
+            'base_unit_id' => $baseUnitId,
+            'supplier_id' => $supplier->id,
+            'supplier_name' => $supplier->name,
+            'purchase_price' => $purchasePrice,
+            'selling_price' => $sellingPrice,
+            'retail_price' => $retailPrice,
+            'wholesale_price' => $wholesalePrice,
+            'stock_quantity' => 0,
+            'low_stock_threshold' => 10,
+            'selling_type' => $sellingType,
+            'product_type' => 'single',
+            'is_active' => true,
+            'user_id' => auth()->id(),
+            'owner_branch_id' => $currentBranchId,
+        ]);
+
+        if ((int) ($product->getAttributes()['owner_branch_id'] ?? 0) !== (int) $currentBranchId) {
+            $product->forceFill(['owner_branch_id' => $currentBranchId])->save();
+        }
+
+        app(BranchStockService::class)->initializeProduct(
+            $product,
+            0,
+            $currentBranchId,
+            $sellingType,
+            false
+        );
+
+        ProductUnit::query()->create([
+            'product_id' => $product->id,
+            'unit_id' => $baseUnitId,
+            'is_base_unit' => true,
+            'selling_price' => $sellingPrice,
+            'is_active' => true,
+        ]);
+
+        return $product;
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     * @return array{0: float, 1: float, 2: float}
+     */
+    private function billLineSellingPrices(array $productData, float $purchasePrice, string $sellingType): array
+    {
+        $retailPrice = (float) ($productData['retail_price'] ?? 0);
+        $wholesalePrice = (float) ($productData['wholesale_price'] ?? 0);
+        if ($retailPrice <= 0) {
+            $retailPrice = $purchasePrice;
+        }
+        if ($wholesalePrice <= 0) {
+            $wholesalePrice = $purchasePrice;
+        }
+
+        $sellingPrice = $purchasePrice;
+        if ($sellingType === 'retail') {
+            $sellingPrice = $retailPrice;
+        } elseif ($sellingType === 'wholesale') {
+            $sellingPrice = $wholesalePrice;
+        } else {
+            $sellingPrice = $retailPrice > 0 ? $retailPrice : $wholesalePrice;
+        }
+
+        if ($sellingPrice <= 0) {
+            $sellingPrice = $purchasePrice;
+        }
+
+        return [$retailPrice, $wholesalePrice, $sellingPrice];
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     */
+    private function syncBillProductPricing(Product $product, array $productData, Supplier $supplier, int $branchId): void
+    {
+        $purchasePrice = (float) ($productData['unit_price'] ?? $product->getAttributes()['purchase_price'] ?? 0);
+        $sellingType = $productData['selling_type'] ?? ($product->getAttributes()['selling_type'] ?? 'both');
+        [$retailPrice, $wholesalePrice, $sellingPrice] = $this->billLineSellingPrices($productData, $purchasePrice, $sellingType);
+
+        if ($product->writesMasterForCurrentBranch($branchId)) {
+            $attrs = $product->getAttributes();
+            $payload = [
+                'purchase_price' => $purchasePrice,
+            ];
+            if ((float) ($attrs['retail_price'] ?? 0) <= 0) {
+                $payload['retail_price'] = $retailPrice;
+            }
+            if ((float) ($attrs['wholesale_price'] ?? 0) <= 0) {
+                $payload['wholesale_price'] = $wholesalePrice;
+            }
+            if ((float) ($attrs['selling_price'] ?? 0) <= 0) {
+                $payload['selling_price'] = $sellingPrice;
+            }
+            if (! empty($productData['selling_type'])) {
+                $payload['selling_type'] = $sellingType;
+            }
+            if ((int) $product->owner_branch_id === (int) $branchId) {
+                $payload['supplier_id'] = $supplier->id;
+                $payload['supplier_name'] = $supplier->name;
+            }
+            $product->update($payload);
+
+            return;
+        }
+
+        $overrides = [
+            'purchase_price' => $purchasePrice,
+        ];
+        if (! empty($productData['selling_type'])) {
+            $overrides['selling_type'] = $sellingType;
+        }
+        if ((float) ($productData['retail_price'] ?? 0) > 0) {
+            $overrides['retail_price'] = $retailPrice;
+            $overrides['selling_price'] = $sellingPrice;
+        }
+        if ((float) ($productData['wholesale_price'] ?? 0) > 0) {
+            $overrides['wholesale_price'] = $wholesalePrice;
+        }
+
+        app(BranchStockService::class)->setOverrides($product, $overrides, $branchId);
     }
 
     /**

@@ -24,6 +24,11 @@ class BackfillBranchOwnership extends Command
 
         $this->backfillMembershipFromUsage($dry);
 
+        if (! $dry) {
+            $restored = app(\App\Services\BranchStockService::class)->restoreMissingOwnerMembership();
+            $this->line("Owner membership rows restored: {$restored}");
+        }
+
         $this->info('Done. Re-run `php artisan branches:audit` and quarantine remaining nulls manually — they are not assigned to branch 1.');
 
         return self::SUCCESS;

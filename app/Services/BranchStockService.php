@@ -309,6 +309,83 @@ class BranchStockService
     }
 
     /**
+     * Recreate branch_product_stocks for products whose owner branch has no row
+     * (e.g. RANGEEN SONF after a branch operational wipe).
+     */
+    public function restoreMissingOwnerMembership(): int
+    {
+        if (! Schema::hasTable('branch_product_stocks') || ! Schema::hasColumn('products', 'owner_branch_id')) {
+            return 0;
+        }
+
+        $orphans = DB::table('products as p')
+            ->leftJoin('branch_product_stocks as s', function ($join) {
+                $join->on('s.product_id', '=', 'p.id')
+                    ->on('s.branch_id', '=', 'p.owner_branch_id');
+            })
+            ->whereNotNull('p.owner_branch_id')
+            ->whereNull('s.id')
+            ->select(
+                'p.id',
+                'p.owner_branch_id',
+                'p.selling_type',
+                'p.purchase_price',
+                'p.selling_price',
+                'p.retail_price',
+                'p.wholesale_price'
+            )
+            ->get();
+
+        $now = now();
+        $restored = 0;
+
+        foreach ($orphans as $row) {
+            $purchase = (float) $row->purchase_price;
+            $retail = (float) $row->retail_price;
+            $wholesale = (float) $row->wholesale_price;
+            $selling = (float) $row->selling_price;
+            if ($retail <= 0 && $purchase > 0) {
+                $retail = $purchase;
+            }
+            if ($wholesale <= 0 && $purchase > 0) {
+                $wholesale = $purchase;
+            }
+            if ($selling <= 0) {
+                $selling = $retail ?: $wholesale ?: $purchase;
+            }
+
+            BranchProductStock::query()->create([
+                'branch_id' => (int) $row->owner_branch_id,
+                'product_id' => (int) $row->id,
+                'stock_quantity' => 0,
+                'selling_type' => $row->selling_type ?: 'both',
+                'purchase_price' => $purchase > 0 ? $purchase : null,
+                'retail_price' => $retail > 0 ? $retail : null,
+                'wholesale_price' => $wholesale > 0 ? $wholesale : null,
+                'selling_price' => $selling > 0 ? $selling : null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            if ((int) $row->owner_branch_id !== CurrentBranch::DEFAULT_BRANCH_ID
+                && $purchase > 0
+                && (float) $row->selling_price <= 0
+            ) {
+                DB::table('products')->where('id', $row->id)->update([
+                    'retail_price' => $retail,
+                    'wholesale_price' => $wholesale,
+                    'selling_price' => $selling,
+                    'updated_at' => $now,
+                ]);
+            }
+
+            $restored++;
+        }
+
+        return $restored;
+    }
+
+    /**
      * New branches start empty. Products are assigned explicitly by admin.
      */
     public function initializeBranch(Branch|int $branch): void
