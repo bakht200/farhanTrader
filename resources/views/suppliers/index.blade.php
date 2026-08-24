@@ -272,7 +272,11 @@
                     // Offline: filter local table instead of submitting to server
                     const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
                     if (offline) {
-                        hydrateSuppliersFromOffline();
+                        if (tableHasServerSupplierRows()) {
+                            filterServerSupplierRows();
+                        } else {
+                            hydrateSuppliersFromOffline();
+                        }
                         return;
                     }
                     form.submit();
@@ -293,7 +297,40 @@
             return 'PKR ' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
 
+        function supplierTableBody() {
+            return document.querySelector('table.min-w-full tbody');
+        }
+
+        function tableHasServerSupplierRows() {
+            const tbody = supplierTableBody();
+            if (!tbody) {
+                return false;
+            }
+            return [...tbody.querySelectorAll('a[href]')].some((a) => {
+                const href = a.getAttribute('href') || '';
+                return /\/suppliers\/\d+/.test(href);
+            });
+        }
+
+        function filterServerSupplierRows() {
+            const tbody = supplierTableBody();
+            if (!tbody) {
+                return;
+            }
+            const search = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+            tbody.querySelectorAll('tr').forEach((tr) => {
+                const hay = (tr.innerText || '').toLowerCase();
+                tr.style.display = !search || hay.includes(search) ? '' : 'none';
+            });
+        }
+
         async function hydrateSuppliersFromOffline() {
+            // Cached supplier names do not include paid/remaining. Never replace
+            // a live Laravel table with those zeros.
+            if (tableHasServerSupplierRows()) {
+                filterServerSupplierRows();
+                return;
+            }
             if (!window.FTOffline?.db?.suppliers) {
                 return;
             }

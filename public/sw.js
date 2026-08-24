@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages';
+const CACHE_NAME = 'ftpos-pages-v3';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2000;
 const NAV_TIMEOUT_UNCACHED_MS = 8000;

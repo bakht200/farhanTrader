@@ -5,7 +5,7 @@
 
 import { isOnline } from './connectivity';
 
-export const CACHE_NAME = 'ftpos-pages';
+export const CACHE_NAME = 'ftpos-pages-v3';
 
 export const PRECACHE_ROUTES = [
     '/',
