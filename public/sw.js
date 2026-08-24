@@ -1,6 +1,11 @@
 /* Farhan Traders offline Service Worker — no install prompt */
 const CACHE_NAME = 'ftpos-pages';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
+const NAV_TIMEOUT_ONLINE_MS = 2000;
+const NAV_TIMEOUT_UNCACHED_MS = 8000;
+
+/** Page runtime tells us when the link is actually usable. Default to cache. */
+let preferCache = true;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -63,10 +68,50 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  if (event.data?.type === 'CONNECTIVITY') {
+    preferCache = event.data.online !== true;
+  }
   if (event.data?.type === 'PRECACHE' && Array.isArray(event.data.urls)) {
     event.waitUntil(precacheUrls(event.data.urls));
   }
 });
+
+async function fetchWithTimeout(request, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(request, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleNavigation(request) {
+  const url = new URL(request.url);
+  const cached = await matchNavigation(request);
+
+  if (preferCache && cached && !String(cached.url || '').includes('/offline.html')) {
+    return cached;
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      request,
+      cached && !String(cached.url || '').includes('/offline.html')
+        ? NAV_TIMEOUT_ONLINE_MS
+        : NAV_TIMEOUT_UNCACHED_MS
+    );
+    if (res && res.ok) {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        await storePage(cache, url.pathname, res.clone());
+      } catch (e) {}
+      return res;
+    }
+  } catch (e) {}
+
+  return cached;
+}
 
 async function matchNavigation(request) {
   const url = new URL(request.url);
@@ -113,17 +158,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (req.mode === 'navigate') {
-    event.respondWith(
-      fetch(req)
-        .then(async (res) => {
-          try {
-            const cache = await caches.open(CACHE_NAME);
-            await storePage(cache, url.pathname, res.clone());
-          } catch (e) {}
-          return res;
-        })
-        .catch(() => matchNavigation(req))
-    );
+    event.respondWith(handleNavigation(req));
     return;
   }
 

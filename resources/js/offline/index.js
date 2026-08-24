@@ -67,7 +67,7 @@ async function setupLoginForm() {
         const email = emailInput?.value || '';
         const password = passwordInput?.value || '';
 
-        const online = await checkNow();
+        const online = isOnline() || await checkNow();
         if (online) {
             sessionStorage.setItem(PASSWORD_STASH_KEY, password);
             return; // normal submit
@@ -204,7 +204,7 @@ async function applyBranchSwitchFromPage() {
 export async function bootOfflineRuntime() {
     exposeApi();
     await registerServiceWorker();
-    startConnectivityMonitor();
+    await startConnectivityMonitor();
     await mountOfflineBanner();
 
     if (isLoginPage()) {
@@ -214,27 +214,17 @@ export async function bootOfflineRuntime() {
 
     await guardAuthenticatedOffline();
 
+    startSyncScheduler();
+
     if (isOnline()) {
-        try {
-            await maybeEnrollAfterLogin();
-            // Always refresh cache when online in app
-            if (document.body?.dataset?.ftOfflineBoot !== '0') {
-                await bootstrap().catch(async () => {
-                    // If bootstrap fails due to auth, ignore; page still works online via Laravel
-                });
-            }
-            // Auto-cache main app pages so offline nav works without visiting each page
-            warmOfflineShells();
-            startSyncScheduler();
-            const pending = await pendingOutboxCount();
-            if (pending > 0) {
-                await syncNow().catch(() => {});
-            }
-        } catch (e) {
-            console.warn('[offline] boot sync issue', e);
+        maybeEnrollAfterLogin().catch(() => {});
+        if (document.body?.dataset?.ftOfflineBoot !== '0') {
+            bootstrap().catch(() => {});
         }
-    } else {
-        startSyncScheduler();
+        warmOfflineShells();
+        pendingOutboxCount()
+            .then((pending) => (pending > 0 ? syncNow() : null))
+            .catch(() => {});
     }
 
     onBroadcast((msg) => {

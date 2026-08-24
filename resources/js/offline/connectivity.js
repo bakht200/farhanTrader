@@ -1,14 +1,20 @@
 import { broadcast } from './broadcast';
 
 const PROBE_URL = '/up';
-const HEARTBEAT_MS = 15000;
-const DEBOUNCE_MS = 2000;
-const PROBE_TIMEOUT_MS = 3000;
+const PROBE_TIMEOUT_MS = 2000;
+const SLOW_MS = 800;
+const HEARTBEAT_ONLINE_MS = 20000;
+const HEARTBEAT_OFFLINE_MS = 4000;
+const STABLE_HITS_NEEDED = 3;
+const MIN_OFFLINE_MS = 5000;
 
 /** @type {'offline' | 'online'} */
-let status = navigator.onLine ? 'online' : 'offline';
-let debounceTimer = null;
+let status = 'offline';
+let consecutiveFastHits = 0;
+let requireStableRecovery = false;
+let probing = false;
 let heartbeatTimer = null;
+let holdOfflineUntil = 0;
 const listeners = new Set();
 
 export function getConnectivityStatus() {
@@ -26,13 +32,37 @@ export function onConnectivityChange(fn) {
 
 function emit(next) {
     if (next === status) {
+        notifyServiceWorker(next === 'online');
         return;
     }
     const prev = status;
     status = next;
+    if (next === 'offline' && prev === 'online') {
+        holdOfflineUntil = Date.now() + MIN_OFFLINE_MS;
+        consecutiveFastHits = 0;
+        requireStableRecovery = true;
+    }
+    if (next === 'online') {
+        requireStableRecovery = false;
+        consecutiveFastHits = STABLE_HITS_NEEDED;
+        holdOfflineUntil = 0;
+    }
     listeners.forEach((fn) => fn(status, prev));
     broadcast('connectivity', { status });
     window.dispatchEvent(new CustomEvent('ftpos-connectivity', { detail: { status, prev } }));
+    notifyServiceWorker(next === 'online');
+    restartHeartbeat();
+}
+
+function notifyServiceWorker(online) {
+    if (!('serviceWorker' in navigator)) {
+        return;
+    }
+    const msg = { type: 'CONNECTIVITY', online: !!online };
+    navigator.serviceWorker.controller?.postMessage(msg);
+    navigator.serviceWorker.ready
+        .then((reg) => reg.active?.postMessage(msg))
+        .catch(() => {});
 }
 
 /**
@@ -43,12 +73,33 @@ function browserReportsOnline() {
     return typeof navigator !== 'undefined' && navigator.onLine !== false;
 }
 
+function browserLooksSlow() {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) {
+        return false;
+    }
+    if (c.saveData) {
+        return true;
+    }
+    if (c.effectiveType === 'slow-2g' || c.effectiveType === '2g') {
+        return true;
+    }
+    if (typeof c.rtt === 'number' && c.rtt > 750) {
+        return true;
+    }
+    if (typeof c.downlink === 'number' && c.downlink > 0 && c.downlink < 0.4) {
+        return true;
+    }
+    return false;
+}
+
 async function probe() {
     if (!browserReportsOnline()) {
-        return false;
+        return { ok: false, ms: 0, slow: true };
     }
 
     const controller = new AbortController();
+    const started = performance.now();
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
     try {
         const res = await fetch(PROBE_URL, {
@@ -56,75 +107,109 @@ async function probe() {
             cache: 'no-store',
             credentials: 'same-origin',
             signal: controller.signal,
-            headers: { Accept: 'text/html,application/json' },
+            headers: { Accept: 'text/html,application/json', 'X-Ftpos-Probe': '1' },
         });
-        clearTimeout(timer);
-        // Re-check: Wi‑Fi may have dropped during the request
-        return res.ok && browserReportsOnline();
+        const ms = performance.now() - started;
+        const ok = res.ok && browserReportsOnline();
+        return { ok, ms, slow: !ok || ms > SLOW_MS || browserLooksSlow() };
     } catch {
+        return { ok: false, ms: performance.now() - started, slow: true };
+    } finally {
         clearTimeout(timer);
+    }
+}
+
+function canPromoteToOnline() {
+    return Date.now() >= holdOfflineUntil;
+}
+
+async function evaluate({ instant = false } = {}) {
+    if (probing) {
+        return status === 'online';
+    }
+    probing = true;
+    try {
+        if (!browserReportsOnline() || browserLooksSlow()) {
+            consecutiveFastHits = 0;
+            requireStableRecovery = true;
+            emit('offline');
+            return false;
+        }
+
+        const result = await probe();
+        if (!result.ok || result.slow) {
+            consecutiveFastHits = 0;
+            requireStableRecovery = true;
+            emit('offline');
+            return false;
+        }
+
+        consecutiveFastHits += 1;
+        const needed = instant || !requireStableRecovery || status === 'online'
+            ? 1
+            : STABLE_HITS_NEEDED;
+        if (consecutiveFastHits >= needed && canPromoteToOnline()) {
+            emit('online');
+            return true;
+        }
+
         return false;
+    } finally {
+        probing = false;
     }
 }
 
 function setOfflineImmediate() {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-    }
+    consecutiveFastHits = 0;
+    requireStableRecovery = true;
     emit('offline');
 }
 
-function setOnlineDebounced() {
-    if (!browserReportsOnline()) {
-        setOfflineImmediate();
-        return;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = setTimeout(async () => {
-        if (!browserReportsOnline()) {
-            emit('offline');
-            return;
-        }
-        const ok = await probe();
-        if (ok) {
-            emit('online');
-        } else {
-            emit('offline');
-        }
-    }, DEBOUNCE_MS);
+function scheduleBackgroundCheck(delayMs = 300) {
+    setTimeout(() => {
+        evaluate().catch(() => {});
+    }, delayMs);
 }
 
 export async function checkNow() {
-    if (!browserReportsOnline()) {
-        emit('offline');
-        return false;
-    }
-    const ok = await probe();
-    if (ok) {
-        emit('online');
-    } else {
-        emit('offline');
-    }
-    return ok;
+    consecutiveFastHits = 0;
+    return evaluate({ instant: true });
 }
 
-export function startConnectivityMonitor() {
-    window.addEventListener('online', () => setOnlineDebounced());
+function restartHeartbeat() {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+    }
+    const ms = status === 'online' ? HEARTBEAT_ONLINE_MS : HEARTBEAT_OFFLINE_MS;
+    heartbeatTimer = setInterval(() => {
+        evaluate().catch(() => {});
+    }, ms);
+}
+
+export async function startConnectivityMonitor() {
+    // Use cached pages until a fast probe proves the network is usable.
+    notifyServiceWorker(false);
+
+    window.addEventListener('online', () => scheduleBackgroundCheck(400));
     window.addEventListener('offline', () => setOfflineImmediate());
+
+    const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    connection?.addEventListener?.('change', () => {
+        if (!browserReportsOnline() || browserLooksSlow()) {
+            setOfflineImmediate();
+            return;
+        }
+        scheduleBackgroundCheck(200);
+    });
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            checkNow();
+            scheduleBackgroundCheck(0);
         }
     });
 
-    checkNow();
-    heartbeatTimer = setInterval(() => {
-        checkNow();
-    }, HEARTBEAT_MS);
+    await evaluate({ instant: true });
+    restartHeartbeat();
 
     return () => {
         if (heartbeatTimer) {
@@ -135,4 +220,5 @@ export function startConnectivityMonitor() {
 
 export function markOfflineFromError() {
     setOfflineImmediate();
+    scheduleBackgroundCheck(HEARTBEAT_OFFLINE_MS);
 }

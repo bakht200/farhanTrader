@@ -64,7 +64,7 @@ function applyPill(pill, pendingEl, { online, pending, syncing }) {
     if (!online) {
         pill.className = `${base} bg-red-600 text-white`;
         pill.textContent = 'OFFLINE';
-        pill.title = 'No internet — changes save on this device and sync later';
+        pill.title = 'Internet is slow or disconnected — using this device. Connection is checked in the background.';
     } else if (syncing) {
         pill.className = `${base} bg-amber-400 text-gray-900`;
         pill.textContent = 'SYNCING…';

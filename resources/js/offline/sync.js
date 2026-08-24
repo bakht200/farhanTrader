@@ -14,10 +14,15 @@ function csrf() {
 }
 
 async function api(url, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 12000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+        const { timeoutMs: _ignored, signal, ...rest } = options;
         const res = await fetch(url, {
             credentials: 'same-origin',
-            ...options,
+            ...rest,
+            signal: signal || controller.signal,
             headers: {
                 Accept: 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
@@ -39,10 +44,16 @@ async function api(url, options = {}) {
 
         return res.json();
     } catch (err) {
-        if (err.name === 'TypeError' || /Failed to fetch|NetworkError/i.test(err.message || '')) {
+        if (
+            err.name === 'AbortError'
+            || err.name === 'TypeError'
+            || /Failed to fetch|NetworkError|aborted/i.test(err.message || '')
+        ) {
             markOfflineFromError();
         }
         throw err;
+    } finally {
+        clearTimeout(timer);
     }
 }
 
@@ -158,7 +169,7 @@ export async function bootstrap() {
     if (!isOnline()) {
         return null;
     }
-    const data = await api('/sync/bootstrap');
+    const data = await api('/sync/bootstrap', { timeoutMs: 25000 });
     await hydrateFromBootstrap(data);
     return data;
 }

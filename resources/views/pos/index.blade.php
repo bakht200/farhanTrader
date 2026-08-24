@@ -438,7 +438,7 @@
         let editingCustomProductIndex = null; // Track which custom product is being edited
         const conversionFactorCache = {};
 
-        (async function hydratePosFromOfflineCache() {
+        async function hydratePosFromOfflineCache() {
             if (!window.FTOffline || (window.FTOffline.isOnline && window.FTOffline.isOnline())) {
                 return;
             }
@@ -478,7 +478,13 @@
             } catch (e) {
                 console.warn('Offline POS hydrate failed', e);
             }
-        })();
+        }
+        hydratePosFromOfflineCache();
+        window.addEventListener('ftpos-connectivity', (e) => {
+            if (e.detail?.status === 'offline') {
+                hydratePosFromOfflineCache();
+            }
+        });
 
         function getNumericStockQuantity(item) {
             return parseFloat(item?.stock_quantity) || 0;
@@ -488,15 +494,37 @@
             return Number(item?.base_unit_id ?? item?.unit_id) || null;
         }
 
+        function localConversionFactor(productId, fromUnitId, toUnitId) {
+            const product = products.find(p => Number(p.id) === Number(productId));
+            const unitsList = product && Array.isArray(product.selling_units) ? product.selling_units : [];
+            const from = unitsList.find(u => Number(u.unit_id) === Number(fromUnitId));
+            const to = unitsList.find(u => Number(u.unit_id) === Number(toUnitId));
+            const fromN = Number(from && from.conversion_from_base);
+            const toN = Number(to && to.conversion_from_base);
+            if (!from || !to || !fromN || !toN || fromN <= 0 || toN <= 0) {
+                return null;
+            }
+            return toN / fromN;
+        }
+
         async function getConversionFactor(productId, fromUnitId, toUnitId) {
             const fromId = Number(fromUnitId);
             const toId = Number(toUnitId);
             if (!productId || !fromId || !toId) return null;
             if (fromId === toId) return 1;
 
+            const local = localConversionFactor(productId, fromId, toId);
+            if (local != null) {
+                return local;
+            }
+
             const cacheKey = `${productId}:${fromId}:${toId}`;
             if (Object.prototype.hasOwnProperty.call(conversionFactorCache, cacheKey)) {
                 return conversionFactorCache[cacheKey];
+            }
+
+            if (window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline()) {
+                return null;
             }
 
             try {
@@ -508,19 +536,16 @@
                 });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || !data.success || data.conversion_factor == null) {
-                    conversionFactorCache[cacheKey] = null;
                     return null;
                 }
                 const factor = parseFloat(data.conversion_factor);
                 if (Number.isNaN(factor) || factor <= 0) {
-                    conversionFactorCache[cacheKey] = null;
                     return null;
                 }
                 conversionFactorCache[cacheKey] = factor;
                 return factor;
             } catch (error) {
                 console.warn('Failed to fetch conversion factor:', error);
-                conversionFactorCache[cacheKey] = null;
                 return null;
             }
         }
@@ -1133,16 +1158,7 @@
 
             const convHeaders = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
             async function fetchFactor(fromId, toId) {
-                const res = await fetch(`/products/${product.id}/conversion/${fromId}/${toId}`, { headers: convHeaders });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || !data.success || data.conversion_factor == null) {
-                    return null;
-                }
-                const f = parseFloat(data.conversion_factor);
-                if (Number.isNaN(f) || f <= 0) {
-                    return null;
-                }
-                return f;
+                return getConversionFactor(product.id, fromId, toId);
             }
 
             try {
@@ -1263,11 +1279,10 @@
                     const basePrice = branchBasePrice || (baseUnit ? parseFloat(baseUnit.selling_price) : 0);
                     if (baseUnit && baseUnit.unit_id != newUnitId && basePrice) {
                         try {
-                            const response = await fetch(`/products/${product.id}/conversion/${baseUnit.unit_id}/${newUnitId}`);
-                            const data = await response.json();
-                            if (data.success && data.conversion_factor) {
-                                // Price = base_unit_price × conversion_factor
-                                item.selling_price = parseFloat(basePrice) * parseFloat(data.conversion_factor);
+                            const factor = await getConversionFactor(product.id, baseUnit.unit_id, newUnitId);
+                            if (factor) {
+                                // 1 base unit = `factor` of the selected unit, so unit price = base ÷ factor
+                                item.selling_price = parseFloat(basePrice) / parseFloat(factor);
                             } else {
                                 console.warn('Conversion factor not found, using base unit price');
                                 item.selling_price = parseFloat(basePrice);

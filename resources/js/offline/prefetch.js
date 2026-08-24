@@ -3,6 +3,8 @@
  * so offline navigation works without visiting each page first.
  */
 
+import { isOnline } from './connectivity';
+
 export const CACHE_NAME = 'ftpos-pages';
 
 export const PRECACHE_ROUTES = [
@@ -104,7 +106,7 @@ async function storePage(cache, path, res) {
  * Fetch each route while online (with cookies) and store in cache.
  */
 export async function prefetchAppShells(urls) {
-    if (!navigator.onLine) {
+    if (!isOnline()) {
         return { ok: 0, failed: 0 };
     }
 
@@ -120,6 +122,9 @@ export async function prefetchAppShells(urls) {
 
     const batchSize = 3;
     for (let i = 0; i < list.length; i += batchSize) {
+        if (!isOnline()) {
+            break;
+        }
         const batch = list.slice(i, i + batchSize);
         await Promise.all(
             batch.map(async (path) => {
