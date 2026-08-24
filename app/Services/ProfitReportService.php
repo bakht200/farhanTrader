@@ -12,6 +12,19 @@ use Illuminate\Support\Collection;
 class ProfitReportService
 {
     /**
+     * Line profit: selling amount minus catalog cost in the product's base unit.
+     *
+     * purchase_price is per carton/bag. Sold quantity is often PKT/KG, so
+     * (sell - cost) * quantity would treat every packet as a full carton.
+     */
+    public static function grossProfitSql(): string
+    {
+        return '(sale_items.unit_price * sale_items.quantity - COALESCE(sale_items.discount, 0))'
+            .' - COALESCE(products.purchase_price, 0)'
+            .' * COALESCE(sale_items.quantity_in_base_unit, sale_items.quantity)';
+    }
+
+    /**
      * @return array{
      *     revenue: float,
      *     gross_profit: float,
@@ -38,7 +51,7 @@ class ProfitReportService
             ->where('sales.branch_id', $branchId)
             ->where('sales.status', 'completed')
             ->whereBetween('sales.sale_date', [$startDate->toDateString(), $endDate->toDateString()])
-            ->selectRaw('SUM((sale_items.unit_price - COALESCE(products.purchase_price, 0)) * sale_items.quantity - COALESCE(sale_items.discount, 0)) as gross_profit')
+            ->selectRaw('SUM('.self::grossProfitSql().') as gross_profit')
             ->value('gross_profit');
 
         $totalExpenses = (float) Expense::query()

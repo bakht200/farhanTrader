@@ -20,7 +20,7 @@ class AiInsightsService
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
             ->where('sales.branch_id', $branchId)
-            ->selectRaw('SUM((sale_items.unit_price - COALESCE(products.purchase_price, 0)) * sale_items.quantity - COALESCE(sale_items.discount, 0)) as total_profit')
+            ->selectRaw('SUM('.ProfitReportService::grossProfitSql().') as total_profit')
             ->value('total_profit');
 
         $totalLost = (float) SaleItem::query()
