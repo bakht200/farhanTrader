@@ -1162,6 +1162,7 @@ class ProductController extends Controller
                 'unit_short_name' => $pu['unit_short_name'] ?? ($pu['unit_name'] ?? ''),
                 'is_base_unit' => $pu['is_base_unit'],
                 'selling_price' => $pu['selling_price'] ?? 0,
+                'conversion_from_base' => $pu['conversion_from_base'] ?? ($pu['is_base_unit'] ? 1 : 0),
             ];
         });
         

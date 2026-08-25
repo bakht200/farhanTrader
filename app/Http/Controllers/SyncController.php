@@ -17,6 +17,7 @@ use App\Models\Supplier;
 use App\Models\Unit;
 use App\Models\UnitConversion;
 use App\Models\User;
+use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -331,6 +332,8 @@ class SyncController extends Controller
 
         $subtotal = 0;
         $totalDiscount = 0;
+        $prepared = [];
+        $conversion = app(UnitConversionService::class);
 
         foreach ($items as $line) {
             $lineTotal = round(((float) ($line['quantity'] ?? 0)) * ((float) ($line['selling_price'] ?? 0)), 2);
@@ -347,16 +350,30 @@ class SyncController extends Controller
             $subtotal += $lineTotal;
 
             $isCustom = isset($line['is_custom']) && ($line['is_custom'] == '1' || $line['is_custom'] === true);
+            $qty = (float) ($line['quantity'] ?? 0);
+            $qtyInBase = $qty;
+            $product = null;
             if (! $isCustom && ! empty($line['product_id'])) {
                 $product = Product::query()->visibleToBranch($branchId)->find($line['product_id']);
                 if (! $product) {
                     throw new \RuntimeException('Product not found: '.$line['product_id']);
                 }
-                $qty = (float) ($line['quantity'] ?? 0);
-                if ($qty > (float) ($product->currentStock($branchId) ?? 0) + 0.000001) {
+                $unitId = ! empty($line['unit_id']) ? (int) $line['unit_id'] : null;
+                $qtyInBase = $conversion->toBaseQuantity($product, $qty, $unitId);
+                if ($qtyInBase > (float) ($product->currentStock($branchId) ?? 0) + 0.000001) {
                     throw new \RuntimeException("Insufficient stock for {$product->name}");
                 }
             }
+
+            $prepared[] = [
+                'line' => $line,
+                'is_custom' => $isCustom,
+                'qty' => $qty,
+                'qty_in_base' => $qtyInBase,
+                'price' => (float) ($line['selling_price'] ?? 0),
+                'line_total' => $lineTotal,
+                'product' => $product,
+            ];
         }
 
         $totalAmount = round($subtotal, 2);
@@ -387,16 +404,13 @@ class SyncController extends Controller
             'notes' => $payload['comment'] ?? "Customer: {$customerName}",
         ]);
 
-        foreach ($items as $line) {
-            $isCustom = isset($line['is_custom']) && ($line['is_custom'] == '1' || $line['is_custom'] === true);
-            $qty = (float) ($line['quantity'] ?? 0);
-            $price = (float) ($line['selling_price'] ?? 0);
-            $lineTotal = round($qty * $price, 2);
-
-            $product = null;
-            if (! $isCustom && ! empty($line['product_id'])) {
-                $product = Product::query()->visibleToBranch($branchId)->find($line['product_id']);
-            }
+        foreach ($prepared as $row) {
+            $line = $row['line'];
+            $isCustom = $row['is_custom'];
+            $qty = $row['qty'];
+            $price = $row['price'];
+            $lineTotal = $row['line_total'];
+            $product = $row['product'];
 
             $productName = $isCustom
                 ? ($line['product_name'] ?? 'Custom Product')
@@ -408,7 +422,7 @@ class SyncController extends Controller
                 'product_id' => $isCustom ? null : ($line['product_id'] ?? null),
                 'product_name' => $productName,
                 'quantity' => $qty,
-                'quantity_in_base_unit' => $qty,
+                'quantity_in_base_unit' => $row['qty_in_base'],
                 'unit_id' => $line['unit_id'] ?? null,
                 'unit_price' => $price,
                 'discount' => $line['discount'] ?? 0,
@@ -416,7 +430,7 @@ class SyncController extends Controller
             ]);
 
             if ($product) {
-                $product->decrementStock($qty, $branchId, [
+                $product->decrementStock($row['qty_in_base'], $branchId, [
                     'source_type' => 'sale',
                     'source_id' => $sale->id,
                     'reason' => 'offline sync sale',
@@ -510,7 +524,7 @@ class SyncController extends Controller
         }
         $query = Product::query()
             ->visibleToBranch($branchId)
-            ->with(['currentBranchStock', 'unit', 'baseUnit']);
+            ->with(['currentBranchStock', 'unit', 'baseUnit', 'productUnits.unit']);
         if ($sinceAt) {
             // Include products whose master row changed OR whose branch overrides/stock changed
             $changedOverrideIds = BranchProductStock::query()
@@ -542,6 +556,10 @@ class SyncController extends Controller
                 'stock_quantity' => (float) ($branchStock?->stock_quantity ?? 0),
                 'selling_type' => $branchStock?->selling_type
                     ?: ($attrs['selling_type'] ?? 'retail'),
+                'unit_id' => $attrs['base_unit_id'] ?? $attrs['unit_id'] ?? null,
+                'base_unit_id' => $attrs['base_unit_id'] ?? $attrs['unit_id'] ?? null,
+                'unit_name' => $product->baseUnit->short_name ?? $product->unit->short_name ?? 'Pcs',
+                'selling_units' => $product->sellingUnitsForPos(),
             ]);
         });
     }

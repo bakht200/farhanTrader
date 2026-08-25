@@ -1,11 +1,13 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v3';
+const CACHE_NAME = 'ftpos-pages-v5';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2000;
 const NAV_TIMEOUT_UNCACHED_MS = 8000;
 
 /** Page runtime tells us when the link is actually usable. Default to cache. */
 let preferCache = true;
+/** After logout or an expired-session redirect, do not serve cached app shells. */
+let loggedOut = false;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -25,8 +27,45 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function isLoginPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/login' || p.startsWith('/login/');
+}
+
+function isLogoutPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/logout' || p.startsWith('/logout/');
+}
+
+function responseIsLogin(res) {
+  try {
+    return isLoginPath(new URL(res.url).pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
+function isOfflineHtml(res) {
+  return String(res && res.url ? res.url : '').includes('/offline.html');
+}
+
+function loginRedirect() {
+  return Response.redirect(new URL('/login', self.location.origin).href, 302);
+}
+
+async function notifySessionExpired() {
+  loggedOut = true;
+  preferCache = false;
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  clients.forEach((client) => client.postMessage({ type: 'SESSION_EXPIRED' }));
+}
+
 async function storePage(cache, path, res) {
   if (!res || !res.ok) {
+    return false;
+  }
+  // Never store login HTML, and never store a login redirect under another route.
+  if (isLoginPath(path) || responseIsLogin(res)) {
     return false;
   }
   // Rebuild response so cache.put works even after redirects
@@ -71,6 +110,10 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'CONNECTIVITY') {
     preferCache = event.data.online !== true;
   }
+  if (event.data?.type === 'LOGOUT') {
+    loggedOut = true;
+    preferCache = false;
+  }
   if (event.data?.type === 'PRECACHE' && Array.isArray(event.data.urls)) {
     event.waitUntil(precacheUrls(event.data.urls));
   }
@@ -80,41 +123,82 @@ async function fetchWithTimeout(request, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(request, { signal: controller.signal });
+    return await fetch(request, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin', redirect: 'follow' });
   } finally {
     clearTimeout(timer);
   }
 }
 
+async function handleAuthNavigation(request) {
+  try {
+    return await fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'follow' });
+  } catch (e) {
+    return loginRedirect();
+  }
+}
+
 async function handleNavigation(request) {
   const url = new URL(request.url);
-  const cached = await matchNavigation(request);
+  const path = url.pathname;
 
-  if (preferCache && cached && !String(cached.url || '').includes('/offline.html')) {
+  if (loggedOut && !isLoginPath(path)) {
+    return loginRedirect();
+  }
+
+  if (isLoginPath(path) || isLogoutPath(path)) {
+    return handleAuthNavigation(request);
+  }
+
+  const cached = await matchNavigation(request);
+  const cacheUsable = cached && !isOfflineHtml(cached) && !responseIsLogin(cached);
+
+  // Fast path while the link is slow: serve cache, then check if the session died.
+  if (preferCache && cacheUsable) {
+    fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'follow' })
+      .then((res) => {
+        if (res && responseIsLogin(res)) {
+          return notifySessionExpired();
+        }
+        if (res && res.ok && !responseIsLogin(res)) {
+          loggedOut = false;
+        }
+      })
+      .catch(() => {});
     return cached;
   }
 
   try {
     const res = await fetchWithTimeout(
       request,
-      cached && !String(cached.url || '').includes('/offline.html')
-        ? NAV_TIMEOUT_ONLINE_MS
-        : NAV_TIMEOUT_UNCACHED_MS
+      cacheUsable ? NAV_TIMEOUT_ONLINE_MS : NAV_TIMEOUT_UNCACHED_MS
     );
-    if (res && res.ok) {
+    if (res && responseIsLogin(res) && !isLoginPath(path)) {
+      await notifySessionExpired();
+      return loginRedirect();
+    }
+    if (res && res.ok && !responseIsLogin(res)) {
+      loggedOut = false;
       try {
         const cache = await caches.open(CACHE_NAME);
-        await storePage(cache, url.pathname, res.clone());
+        await storePage(cache, path, res.clone());
       } catch (e) {}
       return res;
     }
   } catch (e) {}
+
+  if (cacheUsable) {
+    return cached;
+  }
 
   return cached;
 }
 
 async function matchNavigation(request) {
   const url = new URL(request.url);
+  if (loggedOut && !isLoginPath(url.pathname)) {
+    return caches.match(new URL('/login', self.location.origin).href)
+      || caches.match('/login');
+  }
   const cache = await caches.open(CACHE_NAME);
   const candidates = [
     request,
@@ -124,18 +208,21 @@ async function matchNavigation(request) {
   ];
   for (const key of candidates) {
     const hit = await cache.match(key, { ignoreSearch: true });
-    if (hit) {
+    if (hit && !responseIsLogin(hit)) {
+      return hit;
+    }
+    if (hit && isLoginPath(url.pathname)) {
       return hit;
     }
   }
   const globalHit = await caches.match(request, { ignoreSearch: true });
-  if (globalHit) {
+  if (globalHit && (!responseIsLogin(globalHit) || isLoginPath(url.pathname))) {
     return globalHit;
   }
-  if (url.pathname === '/' || url.pathname === '') {
+  if (!loggedOut && (url.pathname === '/' || url.pathname === '')) {
     const dash = await cache.match('/dashboard', { ignoreSearch: true })
       || await cache.match(new URL('/dashboard', self.location.origin).href);
-    if (dash) {
+    if (dash && !responseIsLogin(dash)) {
       return dash;
     }
   }
@@ -175,10 +262,13 @@ self.addEventListener('fetch', (event) => {
   ) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
-        // Always network-first for sw.js so updates apply
-        if (url.pathname === '/sw.js') {
+        // Network-first for scripts so logout/session fixes are not stuck on an old bundle.
+        if (url.pathname === '/sw.js' || url.pathname.startsWith('/build/') || url.pathname.endsWith('.js')) {
           try {
-            const fresh = await fetch(req);
+            const fresh = await fetch(req, { cache: 'no-store' });
+            if (fresh && fresh.ok && url.pathname.startsWith('/build/')) {
+              cache.put(req, fresh.clone());
+            }
             return fresh;
           } catch (e) {
             return (await cache.match(req)) || Response.error();

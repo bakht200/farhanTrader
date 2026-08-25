@@ -119,11 +119,8 @@
                                 <option value="">Select Bill (Optional)</option>
                                 @if(isset($bills) && $bills->count() > 0)
                                     @foreach($bills as $bill)
-                                        @php
-                                            $remaining = $bill->bill_amount - $bill->transactions()->where('type', 'debit')->sum('amount');
-                                        @endphp
                                         <option value="{{ $bill->id }}" {{ old('supplier_bill_id') == $bill->id ? 'selected' : '' }}>
-                                            Bill #{{ $bill->bill_number ?? $bill->id }} - Amount: PKR {{ number_format($bill->bill_amount, 2) }} (Remaining: PKR {{ number_format($remaining, 2) }})
+                                            Bill #{{ $bill->bill_number ?? $bill->id }} - Amount: PKR {{ number_format($bill->bill_amount, 2) }} (Remaining: PKR {{ number_format($bill->remaining ?? 0, 2) }})
                                         </option>
                                     @endforeach
                                 @endif
@@ -309,56 +306,6 @@
 
     <!-- Products Data for JavaScript -->
     <script>
-        @php
-            $productsData = isset($products) ? $products->map(function($p) {
-                $baseUnitId = $p->base_unit_id ?? $p->unit_id;
-                $sellingUnits = $p->productUnits()->active()->with('unit')->get();
-                $availableUnits = collect();
-                
-                // Add base unit
-                if ($p->baseUnit) {
-                    $availableUnits->push([
-                        'id' => $p->baseUnit->id,
-                        'name' => $p->baseUnit->name,
-                        'short_name' => $p->baseUnit->short_name,
-                        'is_base_unit' => true,
-                    ]);
-                } elseif ($p->unit) {
-                    $availableUnits->push([
-                        'id' => $p->unit->id,
-                        'name' => $p->unit->name,
-                        'short_name' => $p->unit->short_name,
-                        'is_base_unit' => true,
-                    ]);
-                }
-                
-                // Add selling units
-                foreach ($sellingUnits as $pu) {
-                    if ($pu->unit && $pu->unit->id != $baseUnitId) {
-                        $availableUnits->push([
-                            'id' => $pu->unit->id,
-                            'name' => $pu->unit->name,
-                            'short_name' => $pu->unit->short_name,
-                            'is_base_unit' => false,
-                        ]);
-                    }
-                }
-                
-                return [
-                    'id' => $p->id,
-                    'name' => $p->name,
-                    'sku' => $p->sku ?? '',
-                    'purchase_price' => $p->purchase_price ?? 0,
-                    'unit_id' => $p->unit_id ?? null,
-                    'base_unit_id' => $baseUnitId,
-                    'unit_name' => $p->unit ? $p->unit->short_name : '',
-                    'selling_type' => $p->selling_type ?? 'both',
-                    'retail_price' => $p->retail_price ?? 0,
-                    'wholesale_price' => $p->wholesale_price ?? 0,
-                    'available_units' => $availableUnits->values()->all(),
-                ];
-            })->values() : [];
-        @endphp
         const productsData = @json($productsData ?? []);
         const categoriesData = @json(isset($categories) ? $categories->map(function($c) {
             return ['id' => $c->id, 'name' => $c->name];
@@ -484,6 +431,7 @@
                 }
             }
             
+            ensureSharedProductsDatalist();
             const tbody = document.getElementById('productsTableBody');
             const row = document.createElement('tr');
             row.className = 'product-row';
@@ -502,21 +450,11 @@
                                placeholder="Type or search product (auto-merge if exists)"
                                required
                                autocomplete="off"
-                               list="products-list-${productRowIndex}"
+                               list="supplier-products-list"
                                onchange="handleProductNameChange(this, ${productRowIndex})"
                                onblur="handleProductNameChange(this, ${productRowIndex})"
                                oninput="handleProductNameInput(this, ${productRowIndex}, false)"
                                onkeydown="if(event.key === 'Enter') { event.preventDefault(); handleProductNameChange(this, ${productRowIndex}); this.blur(); }">
-                        <datalist id="products-list-${productRowIndex}">
-                            ${productsData.map(p => {
-                                const displayName = p.sku ? `${p.name} (${p.sku})` : p.name;
-                                return `<option value="${p.name}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
-                            }).join('')}
-                            ${productsData.filter(p => p.sku).map(p => {
-                                const displayName = `${p.name} (${p.sku})`;
-                                return `<option value="${p.sku}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
-                            }).join('')}
-                        </datalist>
                         <input type="hidden" name="products[${productRowIndex}][product_id]" class="product-id-input" value="${product ? product.id : ''}">
                         <input type="hidden" name="products[${productRowIndex}][category_id]" class="category-id-input" value="">
                         <input type="hidden" name="products[${productRowIndex}][product_sku]" class="product-sku-input" value="${product ? product.sku : ''}">
@@ -684,7 +622,7 @@
             const row = input.closest('tr');
             if (!row || !row.classList.contains('product-row') || !row.isConnected) return;
             
-            let selectedOption = resolveDatalistOption(`products-list-${index}`, value);
+            let selectedOption = resolveDatalistOption('supplier-products-list', value);
             
             if (selectedOption && fromChange) {
                 // Existing product selected - check if already in table
@@ -1122,8 +1060,25 @@
             }
         }
 
+        function ensureSharedProductsDatalist() {
+            if (document.getElementById('supplier-products-list')) {
+                return;
+            }
+            const dl = document.createElement('datalist');
+            dl.id = 'supplier-products-list';
+            dl.innerHTML = productsData.map(p => {
+                const displayName = p.sku ? `${p.name} (${p.sku})` : p.name;
+                return `<option value="${p.name}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
+            }).join('') + productsData.filter(p => p.sku).map(p => {
+                const displayName = `${p.name} (${p.sku})`;
+                return `<option value="${p.sku}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
+            }).join('');
+            document.body.appendChild(dl);
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
+            ensureSharedProductsDatalist();
             toggleBillFields();
         });
     </script>

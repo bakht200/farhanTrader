@@ -129,6 +129,11 @@ function bindPillClick(id) {
             await syncNow();
             showToast('All changes synced');
         } catch (e) {
+            if (e?.name === 'SessionExpired' || /session expired/i.test(e.message || '')) {
+                const { redirectToLogin } = await import('./session');
+                redirectToLogin();
+                return;
+            }
             showToast(e.message || 'Sync failed');
         }
     });
@@ -167,6 +172,9 @@ export async function mountOfflineBanner() {
             });
         }
         if (msg.type === 'sync-error') {
+            if (/session expired/i.test(msg.payload?.message || '')) {
+                return;
+            }
             showToast(msg.payload?.message || 'Sync error');
         }
     });

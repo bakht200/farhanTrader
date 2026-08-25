@@ -228,7 +228,18 @@ class POSController extends Controller
                 }
                 
                 $unitId = $item['unit_id'] ?? $product->base_unit_id ?? $product->unit_id;
-                $requestedInBaseUnit = $this->resolveQuantityInBaseUnit($product, (float) $item['quantity'], $unitId ? (int) $unitId : null);
+                try {
+                    $requestedInBaseUnit = $this->resolveQuantityInBaseUnit($product, (float) $item['quantity'], $unitId ? (int) $unitId : null);
+                } catch (\RuntimeException $e) {
+                    if ($request->expectsJson()) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => $e->getMessage(),
+                        ], 400);
+                    }
+
+                    return redirect()->back()->with('error', $e->getMessage());
+                }
                 $availableInBaseUnit = (float) ($product->stock_quantity ?? 0);
 
                 if ($requestedInBaseUnit > $availableInBaseUnit + 0.000001) {
@@ -1221,29 +1232,7 @@ class POSController extends Controller
      */
     protected function resolveQuantityInBaseUnit(Product $product, float $quantity, ?int $unitId = null): float
     {
-        $requestedQty = round(max(0, $quantity), 6);
-        $baseUnitId = (int) ($product->base_unit_id ?? $product->unit_id ?? 0);
-
-        if (! $baseUnitId) {
-            throw new \Exception("Base unit is not configured for {$product->name}");
-        }
-
-        $selectedUnitId = $unitId ?: $baseUnitId;
-        if ($selectedUnitId === $baseUnitId) {
-            return $requestedQty;
-        }
-
-        $service = app(UnitConversionService::class);
-        if (! $service->isValidUnitForProduct((int) $product->id, (int) $selectedUnitId)) {
-            throw new \Exception("Selected unit is not configured for {$product->name}");
-        }
-
-        $converted = (float) $service->toBaseUnit($requestedQty, (int) $selectedUnitId, (int) $product->id);
-        if ($converted <= 0) {
-            throw new \Exception("Unable to convert quantity for {$product->name}");
-        }
-
-        return round($converted, 6);
+        return app(UnitConversionService::class)->toBaseQuantity($product, $quantity, $unitId);
     }
 
     /**

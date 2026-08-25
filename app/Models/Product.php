@@ -481,6 +481,7 @@ class Product extends Model
                 'unit_short_name' => $unit->short_name ?? '',
                 'is_base_unit' => true,
                 'selling_price' => $branchBase,
+                'conversion_from_base' => 1.0,
             ]];
         }
 
@@ -495,13 +496,23 @@ class Product extends Model
             $masterBaseUnitPrice = (float) ($attrs['selling_price'] ?? $attrs['retail_price'] ?? 0);
         }
         $ratio = $masterBaseUnitPrice > 0 ? ($branchBase / $masterBaseUnitPrice) : 1.0;
+        $service = app(UnitConversionService::class);
 
-        return $units->map(function ($pu) use ($branchBase, $ratio) {
+        return $units->map(function ($pu) use ($branchBase, $ratio, $service) {
             $isBase = (bool) $pu->is_base_unit;
             $raw = (float) ($pu->selling_price ?? 0);
             $price = $isBase
                 ? $branchBase
                 : ($raw > 0 ? round($raw * $ratio, 2) : 0.0);
+
+            $fromBase = 1.0;
+            if (! $isBase) {
+                try {
+                    $fromBase = $service->unitsPerBase($this, (int) $pu->unit_id);
+                } catch (\Throwable $e) {
+                    $fromBase = 0.0;
+                }
+            }
 
             return [
                 'unit_id' => $pu->unit_id,
@@ -509,6 +520,7 @@ class Product extends Model
                 'unit_short_name' => $pu->unit->short_name ?? '',
                 'is_base_unit' => $isBase,
                 'selling_price' => $price,
+                'conversion_from_base' => $fromBase,
             ];
         })->values()->all();
     }

@@ -43,4 +43,23 @@ return Application::configure(basePath: dirname(__DIR__))
             // Never redirect()->back() here: / → dashboard → back to / loops the browser.
             abort(403, $e->getMessage());
         });
+
+        $exceptions->render(function (\Illuminate\Session\TokenMismatchException $e, $request) {
+            if ($request->hasSession()) {
+                \Illuminate\Support\Facades\Auth::guard('web')->logout();
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+            }
+
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Your session expired. Please log in again.',
+                    'session_expired' => true,
+                ], 419);
+            }
+
+            return redirect()->route('login')
+                ->with('error', 'Your session expired. Please log in again.');
+        });
     })->create();

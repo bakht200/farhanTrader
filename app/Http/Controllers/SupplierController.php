@@ -13,10 +13,12 @@ use App\Models\Category;
 use App\Models\Unit;
 use App\Services\BranchStockService;
 use App\Support\CurrentBranch;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use InvalidArgumentException;
 
 class SupplierController extends Controller
 {
@@ -349,6 +351,13 @@ class SupplierController extends Controller
             'tax_id' => 'nullable|string',
         ]);
 
+        if (($validated['email'] ?? '') === '') {
+            $validated['email'] = null;
+        }
+        if (($validated['supplier_id'] ?? '') === '') {
+            $validated['supplier_id'] = null;
+        }
+
         Supplier::create($validated);
         return redirect()->route('suppliers.index')->with('success', 'Supplier created successfully.');
     }
@@ -566,18 +575,29 @@ class SupplierController extends Controller
         $balance = $creditTotal - $debitTotal;
         
         // Get bills with remaining amounts for payment selection
-        $bills = $supplier->bills()->with('transactions')->get()->map(function($bill) {
-            $bill->remaining = $bill->bill_amount - $bill->transactions()->where('type', 'debit')->sum('amount'); // Payments are debits
+        $bills = $supplier->bills()->with('transactions')->get()->map(function ($bill) {
+            $bill->remaining = $bill->bill_amount - $bill->transactions->where('type', 'debit')->sum('amount');
             return $bill;
-        })->filter(function($bill) {
+        })->filter(function ($bill) {
             return $bill->remaining > 0;
         });
-        
+
         $products = $this->billFormProducts();
+        $productsData = $this->billFormProductsPayload($products);
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
-        
-        return view('suppliers.transactions.create', compact('supplier', 'creditTotal', 'debitTotal', 'balance', 'bills', 'products', 'categories', 'units'));
+
+        return view('suppliers.transactions.create', compact(
+            'supplier',
+            'creditTotal',
+            'debitTotal',
+            'balance',
+            'bills',
+            'products',
+            'productsData',
+            'categories',
+            'units'
+        ));
     }
 
     public function storeTransaction(Request $request, Supplier $supplier)
@@ -617,115 +637,125 @@ class SupplierController extends Controller
         }
         
         $validated = $request->validate($rules);
+        $creatingBill = $validated['type'] === 'credit' && $request->has('create_bill') && $request->create_bill;
 
-        // If it's a credit (amount owed) and create_bill is checked, create a bill
-        if ($validated['type'] === 'credit' && $request->has('create_bill') && $request->create_bill) {
-            // Calculate bill amount from products if provided, otherwise use amount field
+        if ($creatingBill) {
             $billAmount = $validated['amount'] ?? 0;
-            $productTotal = 0;
-            
-            if (!empty($request->products)) {
+            if (! empty($request->products)) {
                 $productTotal = collect($request->products)->sum('total');
                 $billAmount = $productTotal;
-                
-                // Validate that amount field matches product total if both are provided
                 if (isset($validated['amount']) && abs($validated['amount'] - $productTotal) > 0.01) {
                     return back()->withErrors([
                         'amount' => 'Bill amount must match the total of all products. Product total: PKR ' . number_format($productTotal, 2) . ', Amount entered: PKR ' . number_format($validated['amount'], 2)
                     ])->withInput();
                 }
             }
-            
-            // Handle bill image upload
-            $billImagePath = null;
-            if ($request->hasFile('bill_image')) {
-                $billImagePath = $request->file('bill_image')->store('supplier-bills', 'public');
+            if (isset($validated['paid_amount']) && $validated['paid_amount'] > $billAmount) {
+                return back()->withErrors([
+                    'paid_amount' => 'Paid amount cannot exceed bill amount. Bill amount: PKR ' . number_format($billAmount, 2)
+                ])->withInput();
             }
-            
-            $bill = $supplier->bills()->create([
-                'bill_number' => $validated['bill_number'] ?? null,
-                'bill_amount' => $billAmount,
-                'bill_date' => $validated['bill_date'] ?? $validated['transaction_date'],
-                'description' => $validated['description'] ?? null,
-                'reference_number' => $validated['reference_number'] ?? null,
-                'bill_image' => $billImagePath,
-            ]);
-            
-            // Add products to bill if provided
-            if (!empty($request->products)) {
-                foreach ($request->products as $productData) {
-                    $resolved = $this->resolveBillProduct($productData, $supplier);
-                    $product = $resolved['product'];
-                    $created = $resolved['created'];
-                    $quantityToAdd = (float) ($productData['quantity'] ?? 0);
-                    $purchasePrice = (float) ($productData['unit_price'] ?? 0);
-                    $stockBranchId = CurrentBranch::requireId();
-                    $oldStock = $product->currentStock($stockBranchId);
-                    $oldPrice = (float) ($product->getAttributes()['purchase_price'] ?? 0);
-                    $newStock = $quantityToAdd > 0
-                        ? $product->incrementStock($quantityToAdd, $stockBranchId)
-                        : $oldStock;
-
-                    ProductHistory::create([
-                        'product_id' => $product->id,
-                        'supplier_id' => $supplier->id,
-                        'supplier_bill_id' => $bill->id,
-                        'type' => $created ? 'created' : ($quantityToAdd > 0 ? 'quantity_added' : 'price_updated'),
-                        'quantity_added' => $quantityToAdd,
-                        'old_price' => $created ? null : $oldPrice,
-                        'new_price' => $purchasePrice,
-                        'old_stock_quantity' => $created ? 0 : $oldStock,
-                        'new_stock_quantity' => $newStock,
-                        'notes' => $created
-                            ? 'Product created from supplier bill'
-                            : "Updated from supplier bill #{$bill->bill_number}",
-                        'transaction_date' => $validated['bill_date'] ?? $validated['transaction_date'],
-                    ]);
-
-                    SupplierBillItem::create([
-                        'supplier_bill_id' => $bill->id,
-                        'product_id' => $product->id,
-                        'product_name' => $productData['product_name'] ?? $product->name,
-                        'product_sku' => $productData['product_sku'] ?? $product->sku,
-                        'quantity' => $quantityToAdd,
-                        'unit_price' => $purchasePrice,
-                        'discount' => $productData['discount'] ?? 0,
-                        'tax' => $productData['tax'] ?? 0,
-                        'total' => $productData['total'] ?? 0,
-                    ]);
-                }
-            }
-            
-            $validated['supplier_bill_id'] = $bill->id;
             $validated['amount'] = $billAmount;
-            
-            // Handle payment (debit) if paid_amount is provided
-            if (isset($validated['paid_amount']) && $validated['paid_amount'] > 0) {
-                // Validate that paid amount doesn't exceed bill amount
-                if ($validated['paid_amount'] > $billAmount) {
-                    return back()->withErrors([
-                        'paid_amount' => 'Paid amount cannot exceed bill amount. Bill amount: PKR ' . number_format($billAmount, 2)
-                    ])->withInput();
-                }
-                
-                // Create debit transaction for payment
-                $supplier->transactions()->create([
-                    'type' => 'debit',
-                    'amount' => $validated['paid_amount'],
-                    'description' => $validated['description'] ?? 'Payment for bill #' . ($bill->bill_number ?? $bill->id),
-                    'transaction_date' => $validated['transaction_date'],
-                    'reference_number' => $validated['reference_number'] ?? null,
-                    'supplier_bill_id' => $bill->id,
-                ]);
-            }
         }
 
-        // Remove bill creation fields from transaction data
-        unset($validated['create_bill'], $validated['bill_number'], $validated['bill_date'], $validated['products'], $validated['paid_amount']);
-        
-        // Only create credit transaction if amount is provided
-        if (isset($validated['amount']) && $validated['amount'] > 0) {
-            $supplier->transactions()->create($validated);
+        $billImagePath = null;
+
+        try {
+            DB::transaction(function () use ($request, $supplier, &$validated, $creatingBill, &$billImagePath) {
+                if ($creatingBill) {
+                    if ($request->hasFile('bill_image')) {
+                        $billImagePath = $request->file('bill_image')->store('supplier-bills', 'public');
+                    }
+
+                    $bill = $supplier->bills()->create([
+                        'bill_number' => $validated['bill_number'] ?? null,
+                        'bill_amount' => $validated['amount'] ?? 0,
+                        'bill_date' => $validated['bill_date'] ?? $validated['transaction_date'],
+                        'description' => $validated['description'] ?? null,
+                        'reference_number' => $validated['reference_number'] ?? null,
+                        'bill_image' => $billImagePath,
+                    ]);
+
+                    if (! empty($request->products)) {
+                        foreach ($request->products as $productData) {
+                            $resolved = $this->resolveBillProduct($productData, $supplier);
+                            $product = $resolved['product'];
+                            $created = $resolved['created'];
+                            $quantityToAdd = (float) ($productData['quantity'] ?? 0);
+                            $purchasePrice = (float) ($productData['unit_price'] ?? 0);
+                            $stockBranchId = CurrentBranch::requireId();
+                            $oldStock = $product->currentStock($stockBranchId);
+                            $oldPrice = (float) ($product->getAttributes()['purchase_price'] ?? 0);
+                            $newStock = $quantityToAdd > 0
+                                ? $product->incrementStock($quantityToAdd, $stockBranchId)
+                                : $oldStock;
+
+                            ProductHistory::create([
+                                'product_id' => $product->id,
+                                'supplier_id' => $supplier->id,
+                                'supplier_bill_id' => $bill->id,
+                                'type' => $created ? 'created' : ($quantityToAdd > 0 ? 'quantity_added' : 'price_updated'),
+                                'quantity_added' => $quantityToAdd,
+                                'old_price' => $created ? null : $oldPrice,
+                                'new_price' => $purchasePrice,
+                                'old_stock_quantity' => $created ? 0 : $oldStock,
+                                'new_stock_quantity' => $newStock,
+                                'notes' => $created
+                                    ? 'Product created from supplier bill'
+                                    : "Updated from supplier bill #{$bill->bill_number}",
+                                'transaction_date' => $validated['bill_date'] ?? $validated['transaction_date'],
+                            ]);
+
+                            SupplierBillItem::create([
+                                'supplier_bill_id' => $bill->id,
+                                'product_id' => $product->id,
+                                'product_name' => $productData['product_name'] ?? $product->name,
+                                'product_sku' => $productData['product_sku'] ?? $product->sku,
+                                'quantity' => $quantityToAdd,
+                                'unit_price' => $purchasePrice,
+                                'discount' => $productData['discount'] ?? 0,
+                                'tax' => $productData['tax'] ?? 0,
+                                'total' => $productData['total'] ?? 0,
+                            ]);
+                        }
+                    }
+
+                    $validated['supplier_bill_id'] = $bill->id;
+
+                    if (isset($validated['paid_amount']) && $validated['paid_amount'] > 0) {
+                        $supplier->transactions()->create([
+                            'type' => 'debit',
+                            'amount' => $validated['paid_amount'],
+                            'description' => $validated['description'] ?? 'Payment for bill #' . ($bill->bill_number ?? $bill->id),
+                            'transaction_date' => $validated['transaction_date'],
+                            'reference_number' => $validated['reference_number'] ?? null,
+                            'supplier_bill_id' => $bill->id,
+                        ]);
+                    }
+                }
+
+                unset($validated['create_bill'], $validated['bill_number'], $validated['bill_date'], $validated['products'], $validated['paid_amount']);
+
+                if (isset($validated['amount']) && $validated['amount'] > 0) {
+                    $supplier->transactions()->create($validated);
+                }
+            });
+        } catch (InvalidArgumentException $e) {
+            if ($billImagePath) {
+                Storage::disk('public')->delete($billImagePath);
+            }
+
+            return back()->withErrors(['products' => $e->getMessage()])->withInput();
+        } catch (QueryException $e) {
+            if ($billImagePath) {
+                Storage::disk('public')->delete($billImagePath);
+            }
+            if ($this->isUniqueConstraintFailure($e)) {
+                return back()->withErrors([
+                    'products' => 'This product SKU already exists. Pick the product from the list instead of typing a new one.',
+                ])->withInput();
+            }
+            throw $e;
         }
 
         return redirect()->route('suppliers.show', $supplier)->with('success', 'Transaction added successfully.');
@@ -789,6 +819,7 @@ class SupplierController extends Controller
         
         // Get products, categories, and units for product selection
         $products = $this->billFormProducts();
+        $productsData = $this->billFormProductsPayload($products);
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
         
@@ -797,7 +828,7 @@ class SupplierController extends Controller
         $debitTotal = $supplier->transactions()->where('type', 'debit')->sum('amount');
         $balance = $creditTotal - $debitTotal;
         
-        return view('suppliers.bills.edit', compact('supplier', 'bill', 'products', 'categories', 'units', 'creditTotal', 'debitTotal', 'balance'));
+        return view('suppliers.bills.edit', compact('supplier', 'bill', 'products', 'productsData', 'categories', 'units', 'creditTotal', 'debitTotal', 'balance'));
     }
 
     public function updateBill(Request $request, Supplier $supplier, SupplierBill $bill)
@@ -1128,6 +1159,68 @@ class SupplierController extends Controller
     }
 
     /**
+     * @param  \Illuminate\Support\Collection<int, Product>  $products
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    private function billFormProductsPayload($products)
+    {
+        return $products->map(function (Product $p) {
+            $baseUnitId = $p->base_unit_id ?? $p->unit_id;
+            $availableUnits = collect();
+
+            if ($p->baseUnit) {
+                $availableUnits->push([
+                    'id' => $p->baseUnit->id,
+                    'name' => $p->baseUnit->name,
+                    'short_name' => $p->baseUnit->short_name,
+                    'is_base_unit' => true,
+                ]);
+            } elseif ($p->unit) {
+                $availableUnits->push([
+                    'id' => $p->unit->id,
+                    'name' => $p->unit->name,
+                    'short_name' => $p->unit->short_name,
+                    'is_base_unit' => true,
+                ]);
+            }
+
+            foreach ($p->productUnits as $pu) {
+                if (! $pu->is_active || ! $pu->unit || (int) $pu->unit->id === (int) $baseUnitId) {
+                    continue;
+                }
+                $availableUnits->push([
+                    'id' => $pu->unit->id,
+                    'name' => $pu->unit->name,
+                    'short_name' => $pu->unit->short_name,
+                    'is_base_unit' => false,
+                ]);
+            }
+
+            return [
+                'id' => $p->id,
+                'name' => $p->name,
+                'sku' => $p->sku ?? '',
+                'purchase_price' => $p->purchase_price ?? 0,
+                'unit_id' => $p->unit_id ?? null,
+                'base_unit_id' => $baseUnitId,
+                'unit_name' => $p->unit ? $p->unit->short_name : '',
+                'selling_type' => $p->selling_type ?? 'both',
+                'retail_price' => $p->retail_price ?? 0,
+                'wholesale_price' => $p->wholesale_price ?? 0,
+                'available_units' => $availableUnits->values()->all(),
+            ];
+        })->values();
+    }
+
+    private function isUniqueConstraintFailure(QueryException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? '');
+        $driverCode = (int) ($e->errorInfo[1] ?? 0);
+
+        return $sqlState === '23000' || $driverCode === 1062 || str_contains($e->getMessage(), 'Duplicate entry');
+    }
+
+    /**
      * @param  array<string, mixed>  $productData
      * @return array{product: Product, created: bool}
      */
@@ -1135,10 +1228,28 @@ class SupplierController extends Controller
     {
         $productId = ! empty($productData['product_id']) ? (int) $productData['product_id'] : null;
         $productName = trim((string) ($productData['product_name'] ?? ''));
+        $productSku = trim((string) ($productData['product_sku'] ?? ''));
         $product = $productId ? Product::query()->find($productId) : null;
 
         if ($product && ! $product->isPurchasableByCurrentBranch()) {
             $product = null;
+        }
+
+        if (! $product && $productSku !== '') {
+            $bySku = Product::query()->where('sku', $productSku)->first();
+            if ($bySku && $bySku->isPurchasableByCurrentBranch()) {
+                $product = $bySku;
+            }
+        }
+
+        if (! $product && $productName !== '') {
+            $byName = Product::query()
+                ->purchasableOnBill()
+                ->where('name', $productName)
+                ->first();
+            if ($byName) {
+                $product = $byName;
+            }
         }
 
         if ($product) {
@@ -1187,6 +1298,10 @@ class SupplierController extends Controller
         [$retailPrice, $wholesalePrice, $sellingPrice] = $this->billLineSellingPrices($productData, $purchasePrice, $sellingType);
         $baseUnitId = $productData['base_unit_id'] ?? $unitId;
         $currentBranchId = CurrentBranch::requireId();
+
+        if ($productSku && Product::query()->where('sku', $productSku)->exists()) {
+            $productSku = $this->generateSku($productName);
+        }
 
         $product = Product::query()->create([
             'name' => $productName,

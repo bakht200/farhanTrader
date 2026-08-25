@@ -222,17 +222,6 @@
     <!-- Products Data for JavaScript -->
     <script>
         @php
-            $productsData = isset($products) ? $products->map(function($p) {
-                return [
-                    'id' => $p->id,
-                    'name' => $p->name,
-                    'sku' => $p->sku ?? '',
-                    'purchase_price' => $p->purchase_price ?? 0,
-                    'unit_id' => $p->unit_id ?? null,
-                    'unit_name' => $p->unit ? $p->unit->short_name : '',
-                ];
-            })->values() : [];
-            
             $existingBillItems = $bill->items->map(function($item) {
                 return [
                     'product_id' => $item->product_id,
@@ -256,6 +245,19 @@
         const existingBillItems = @json($existingBillItems ?? []);
         
         let productRowIndex = 0;
+
+        function ensureSharedProductsDatalist() {
+            if (document.getElementById('supplier-products-list')) {
+                return;
+            }
+            const dl = document.createElement('datalist');
+            dl.id = 'supplier-products-list';
+            dl.innerHTML = productsData.map(p => {
+                const displayName = p.sku ? `${p.name} (${p.sku})` : p.name;
+                return `<option value="${p.name}" label="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}"></option>`;
+            }).join('');
+            document.body.appendChild(dl);
+        }
         
         // SKU generation function
         function generateSku(productName = '') {
@@ -283,6 +285,7 @@
         }
         
         function addProductRow(item = null) {
+            ensureSharedProductsDatalist();
             const tbody = document.getElementById('productsTableBody');
             const row = document.createElement('tr');
             row.className = 'product-row';
@@ -300,15 +303,9 @@
                                placeholder="Type or search product"
                                required
                                autocomplete="off"
-                               list="products-list-${productRowIndex}"
+                               list="supplier-products-list"
                                onchange="handleProductNameChange(this, ${productRowIndex})"
                                oninput="handleProductNameInput(this, ${productRowIndex}, false)">
-                        <datalist id="products-list-${productRowIndex}">
-                            ${productsData.map(p => {
-                                const displayName = p.sku ? `${p.name} (${p.sku})` : p.name;
-                                return `<option value="${p.name}" label="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}"></option>`;
-                            }).join('')}
-                        </datalist>
                         <input type="hidden" name="products[${productRowIndex}][product_id]" class="product-id-input" value="${item ? (item.product_id || '') : (product ? product.id : '')}">
                         <input type="hidden" name="products[${productRowIndex}][category_id]" class="category-id-input" value="">
                         <input type="hidden" name="products[${productRowIndex}][product_sku]" class="product-sku-input" value="${item ? (item.product_sku || '') : (product ? product.sku : '')}">
@@ -385,7 +382,7 @@
             const value = input.value.trim();
             if (!value) return;
             
-            const selectedOption = document.querySelector(`#products-list-${index} option[value="${value}"]`);
+            const selectedOption = [...document.querySelectorAll('#supplier-products-list option')].find(o => o.value === value);
             const row = input.closest('tr');
             
             if (selectedOption && fromChange) {
@@ -555,6 +552,7 @@
 
         // Initialize on page load - load existing bill items
         document.addEventListener('DOMContentLoaded', function() {
+            ensureSharedProductsDatalist();
             if (existingBillItems && existingBillItems.length > 0) {
                 existingBillItems.forEach(item => {
                     addProductRow(item);

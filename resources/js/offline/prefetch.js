@@ -5,12 +5,11 @@
 
 import { isOnline } from './connectivity';
 
-export const CACHE_NAME = 'ftpos-pages-v3';
+export const CACHE_NAME = 'ftpos-pages-v5';
 
 export const PRECACHE_ROUTES = [
     '/',
     '/dashboard',
-    '/login',
     '/profile',
     '/products',
     '/products/create',
@@ -80,8 +79,21 @@ function collectNavUrls() {
     return [...urls];
 }
 
+function isLoginPath(pathname) {
+    const p = (pathname || '').replace(/\/+$/, '') || '/';
+    return p === '/login' || p.startsWith('/login/');
+}
+
 async function storePage(cache, path, res) {
     if (!res || !res.ok) {
+        return false;
+    }
+    try {
+        const finalPath = new URL(res.url, window.location.origin).pathname;
+        if (isLoginPath(finalPath) && !isLoginPath(path)) {
+            return false;
+        }
+    } catch {
         return false;
     }
     const buf = await res.clone().arrayBuffer();
@@ -136,24 +148,22 @@ export async function prefetchAppShells(urls) {
                         redirect: 'follow',
                         headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
                     });
-                    if (path === '/login') {
-                        try {
-                            const finalPath = new URL(res.url).pathname;
-                            if (!finalPath.includes('login')) {
-                                failed += 1;
-                                return;
-                            }
-                        } catch {
-                            failed += 1;
-                            return;
-                        }
+                    if (path === '/login' || isLoginPath(path)) {
+                        failed += 1;
+                        return;
                     }
                     if (!cache || !(await storePage(cache, path, res))) {
                         failed += 1;
                         return;
                     }
                     if (path === '/' && cache) {
-                        await storePage(cache, '/dashboard', res);
+                        try {
+                            if (!isLoginPath(new URL(res.url).pathname)) {
+                                await storePage(cache, '/dashboard', res);
+                            }
+                        } catch {
+                            // skip
+                        }
                     }
                     ok += 1;
                 } catch {

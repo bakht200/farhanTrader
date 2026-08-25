@@ -32,9 +32,11 @@ async function api(url, options = {}) {
             },
         });
 
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 419) {
             broadcast('auth-required', {});
-            throw new Error('Session expired. Please log in online.');
+            const err = new Error('Session expired');
+            err.name = 'SessionExpired';
+            throw err;
         }
 
         if (!res.ok) {
@@ -353,7 +355,9 @@ export function startSyncScheduler() {
                 await syncNow();
             } catch (e) {
                 console.warn('[offline] auto sync failed', e);
-                broadcast('sync-error', { message: e.message });
+                if (e?.name !== 'SessionExpired') {
+                    broadcast('sync-error', { message: e.message });
+                }
             }
         }
     });

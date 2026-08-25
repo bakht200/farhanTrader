@@ -51,6 +51,62 @@ class SupplierBillProductsTest extends TestCase
         $this->get(route('sales.pos.index'))->assertOk()->assertSee('RANGEEN SONF');
     }
 
+    public function test_bill_line_without_product_id_reuses_existing_catalog_product(): void
+    {
+        $branch = $this->makeBranch('PESHAWAR CHEMICAL');
+        $user = $this->makeBranchUser($branch);
+        $supplier = $this->makeSupplierForBranch($branch, ['name' => 'Farhan Ullah']);
+        $product = $this->makeProductForBranch($branch, [
+            'name' => 'RANGEEN SONF',
+            'sku' => 'RS-EXISTING-1',
+            'purchase_price' => 240,
+        ], 2);
+
+        $this->actingAs($user);
+        $this->post(route('suppliers.transactions.store', $supplier), $this->billPayload([
+            'product_name' => 'RANGEEN SONF',
+            'product_sku' => 'RS-EXISTING-1',
+            'quantity' => 3,
+            'unit_price' => 250,
+            'total' => 750,
+        ]))->assertRedirect(route('suppliers.show', $supplier));
+
+        $this->assertEquals(1, Product::query()->where('name', 'RANGEEN SONF')->count());
+        $this->assertEquals(5.0, (float) BranchProductStock::query()
+            ->where('branch_id', $branch->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertDatabaseCount('supplier_bills', 1);
+    }
+
+    public function test_overpaid_bill_does_not_leave_a_partial_save(): void
+    {
+        $branch = $this->makeBranch('PESHAWAR CHEMICAL');
+        $user = $this->makeBranchUser($branch);
+        $supplier = $this->makeSupplierForBranch($branch, ['name' => 'Farhan Ullah']);
+        $catalog = $this->catalog();
+
+        $this->actingAs($user);
+        $this->from(route('suppliers.transactions.create', $supplier))
+            ->post(route('suppliers.transactions.store', $supplier), array_merge($this->billPayload([
+                'product_name' => 'RANGEEN SONF',
+                'quantity' => 5,
+                'unit_price' => 240,
+                'total' => 1200,
+                'category_id' => $catalog['category']->id,
+                'unit_id' => $catalog['unit']->id,
+            ]), [
+                'amount' => 1200,
+                'paid_amount' => 5000,
+            ]))
+            ->assertRedirect(route('suppliers.transactions.create', $supplier))
+            ->assertSessionHasErrors('paid_amount');
+
+        $this->assertDatabaseCount('supplier_bills', 0);
+        $this->assertDatabaseCount('supplier_transactions', 0);
+        $this->assertSame(0, Product::query()->where('name', 'RANGEEN SONF')->count());
+    }
+
     public function test_owned_orphan_without_stock_row_is_restored_and_visible(): void
     {
         $branch = $this->makeBranch('PESHAWAR CHEMICAL');

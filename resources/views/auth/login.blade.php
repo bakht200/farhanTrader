@@ -4,6 +4,12 @@
     <!-- Session Status -->
     <x-auth-session-status class="mb-4" :status="session('status')" />
 
+    @if (session('error'))
+        <div class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {{ session('error') }}
+        </div>
+    @endif
+
     <div class="mb-6">
         <h2 class="text-3xl font-bold text-gray-800 mb-2">Sign In</h2>
         <p class="text-gray-600">Access the Farhan Traders panel using your email and passcode.</p>

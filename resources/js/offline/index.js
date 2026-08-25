@@ -13,12 +13,15 @@ import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOffli
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
 import { prefetchAppShells, CACHE_NAME } from './prefetch';
+import {
+    isLoginPage,
+    installSessionGuards,
+    logoutAndRedirect,
+    redirectToLogin,
+    probeServerSession,
+} from './session';
 
 const PASSWORD_STASH_KEY = 'ftpos_enroll_password';
-
-function isLoginPage() {
-    return !!document.querySelector('form[action*="login"]') || window.location.pathname.includes('/login');
-}
 
 async function maybeEnrollAfterLogin() {
     const password = sessionStorage.getItem(PASSWORD_STASH_KEY);
@@ -123,7 +126,7 @@ async function registerServiceWorker() {
         return null;
     }
     try {
-        const reg = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+        const reg = await navigator.serviceWorker.register('/sw.js?v=1.1', { updateViaCache: 'none' });
         await reg.update().catch(() => {});
         if (reg.waiting) {
             reg.waiting.postMessage({ type: 'SKIP_WAITING' });
@@ -161,6 +164,8 @@ function exposeApi() {
         unlockOffline,
         hasAnyVault,
         prefetchAppShells,
+        logoutAndRedirect,
+        redirectToLogin,
     };
 }
 
@@ -203,6 +208,7 @@ async function applyBranchSwitchFromPage() {
 
 export async function bootOfflineRuntime() {
     exposeApi();
+    installSessionGuards();
     await registerServiceWorker();
     await startConnectivityMonitor();
     await mountOfflineBanner();
@@ -213,6 +219,9 @@ export async function bootOfflineRuntime() {
     }
 
     await guardAuthenticatedOffline();
+    if (isOnline()) {
+        probeServerSession().catch(() => {});
+    }
 
     startSyncScheduler();
 
@@ -234,10 +243,10 @@ export async function bootOfflineRuntime() {
                 return;
             }
             // Logged out in another tab
-            window.location.href = '/login';
+            window.location.replace('/login');
         }
         if (msg?.type === 'auth-required') {
-            showToast('Session expired — log in online to sync pending changes');
+            redirectToLogin();
         }
         // branch-changed is handled by inline layout script so other tabs
         // refresh even if this Vite bundle is cached/stale.
@@ -262,6 +271,7 @@ export async function bootOfflineRuntime() {
         syncOnlineOnlyBadges(online);
         if (online) {
             warmOfflineShells();
+            probeServerSession().catch(() => {});
         }
     });
 

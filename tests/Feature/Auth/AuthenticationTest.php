@@ -49,6 +49,22 @@ class AuthenticationTest extends TestCase
         $response = $this->actingAs($user)->post('/logout');
 
         $this->assertGuest();
-        $response->assertRedirect('/');
+        $response->assertRedirect(route('login', absolute: false));
+    }
+
+    public function test_guest_logout_still_redirects_to_login(): void
+    {
+        $this->post('/logout')->assertRedirect('/login');
+        $this->assertGuest();
+    }
+
+    public function test_guests_are_redirected_to_the_login_screen(): void
+    {
+        $this->get('/dashboard')->assertRedirect('/login');
+    }
+
+    public function test_expired_session_json_requests_return_401(): void
+    {
+        $this->getJson('/sync/ping')->assertUnauthorized();
     }
 }

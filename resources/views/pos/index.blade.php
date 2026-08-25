@@ -4952,6 +4952,7 @@
     @include('components.receipt-branding')
     @include('components.stock-alert-notify')
     @include('components.branch-switch-script')
+    @include('components.session-guard-script')
 </body>
 </html>
 

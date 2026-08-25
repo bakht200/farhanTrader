@@ -178,15 +178,7 @@
                                         <form method="POST" action="{{ route('logout') }}" id="ftpos-logout-form">
                                             @csrf
                                             <x-dropdown-link :href="route('logout')"
-                                                    onclick="event.preventDefault();
-                                                            window.__ftposLoggingOut = true;
-                                                            const form = this.closest('form');
-                                                            const submitLogout = () => form && form.submit();
-                                                            if (window.FTOffline && typeof window.FTOffline.clearLocalSession === 'function') {
-                                                                Promise.resolve(window.FTOffline.clearLocalSession()).finally(submitLogout);
-                                                            } else {
-                                                                submitLogout();
-                                                            }">
+                                                    onclick="window.ftposLogout(event)">
                                                 {{ __('Log Out') }}
                                             </x-dropdown-link>
                                         </form>
@@ -204,7 +196,7 @@
                     <!-- Footer -->
                     <footer class="mt-auto py-3 sm:py-4 px-3 sm:px-4 md:px-5 border-t border-gray-200 bg-white flex-shrink-0">
                         <div class="flex flex-col md:flex-row justify-between items-center text-sm text-gray-600 gap-2">
-                            <div>2025 © FTPOS. All Right Reserved</div>
+                            <div>2025 © FTPOS. All Right Reserved · Version {{ config('app.version', '1.1') }}</div>
                             <div>Design &amp; developed by <a href="https://wa.me/923330915166" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-700 font-medium underline">Bakht Biland</a></div>
                         </div>
                     </footer>
@@ -215,5 +207,6 @@
         @include('components.receipt-branding')
         @include('components.stock-alert-notify')
         @include('components.branch-switch-script')
+        @include('components.session-guard-script')
     </body>
 </html>
