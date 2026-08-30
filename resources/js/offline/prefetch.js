@@ -113,6 +113,22 @@ function posCatalogIsEmpty(buf) {
     }
 }
 
+function htmlLooksLikeLogin(buf) {
+    try {
+        const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+        const text = new TextDecoder().decode(slice);
+        if (text.includes('data-ftpos-page="login"')) {
+            return true;
+        }
+        if (text.includes('<div data-ftpos-page="dashboard"')) {
+            return false;
+        }
+        return text.includes('Sign In') && text.includes('name="email"');
+    } catch {
+        return false;
+    }
+}
+
 async function storePage(cache, path, res) {
     if (!res || !res.ok) {
         return false;
@@ -122,10 +138,16 @@ async function storePage(cache, path, res) {
         if (isLoginPath(finalPath) && !isLoginPath(path)) {
             return false;
         }
+        if (isLoginPath(path) && !isLoginPath(finalPath)) {
+            return false;
+        }
     } catch {
         return false;
     }
     const buf = await res.clone().arrayBuffer();
+    if (isLoginPath(path) && !htmlLooksLikeLogin(buf)) {
+        return false;
+    }
     if (isPosPath(path) && posCatalogIsEmpty(buf)) {
         return false;
     }
@@ -194,11 +216,12 @@ export async function prefetchAppShells(urls) {
         await Promise.all(
             batch.map(async (path) => {
                 try {
-                    const res = await fetch(path, {
+                    const isLogin = path === '/login' || isLoginPath(path);
+                    const res = await fetch(isLogin ? '/__ftpos_login_shell' : path, {
                         method: 'GET',
                         credentials: 'same-origin',
                         cache: 'no-cache',
-                        redirect: 'follow',
+                        redirect: isLogin ? 'manual' : 'follow',
                         headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
                     });
                     if (path === '/login' || isLoginPath(path)) {

@@ -7,25 +7,76 @@
     var LOGIN_URL = '/login';
     var onLogin = (window.location.pathname || '').indexOf('/login') !== -1;
 
+    function htmlLooksLikeLogin(html) {
+        if (!html) {
+            return false;
+        }
+        if (html.indexOf('data-ftpos-page="login"') !== -1) {
+            return true;
+        }
+        if (html.indexOf('<div data-ftpos-page="dashboard"') !== -1) {
+            return false;
+        }
+        return html.indexOf('Sign In') !== -1 && html.indexOf('name="email"') !== -1;
+    }
+
+    function paintLogin(html) {
+        try {
+            document.open();
+            document.write(html);
+            document.close();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function findCachedLogin() {
+        if (!('caches' in window)) {
+            return Promise.resolve(null);
+        }
+        return caches.keys().then(function (keys) {
+            return keys.reduce(function (chain, name) {
+                return chain.then(function (found) {
+                    if (found) {
+                        return found;
+                    }
+                    return caches.open(name).then(function (cache) {
+                        return cache.match(LOGIN_URL, { ignoreSearch: true }).then(function (hit) {
+                            return hit || cache.match(new URL(LOGIN_URL, window.location.origin).href, { ignoreSearch: true });
+                        });
+                    });
+                });
+            }, Promise.resolve(null));
+        }).then(function (hit) {
+            if (!hit) {
+                return null;
+            }
+            return hit.text().then(function (html) {
+                return htmlLooksLikeLogin(html) ? html : null;
+            });
+        }).catch(function () {
+            return null;
+        });
+    }
+
     function goLogin() {
-        if (navigator.onLine === false && 'caches' in window) {
-            caches.match(LOGIN_URL).then(function (hit) {
-                if (!hit) {
-                    window.location.replace(LOGIN_URL);
+        function navigate() {
+            window.location.replace(LOGIN_URL);
+        }
+        if (navigator.onLine === false) {
+            findCachedLogin().then(function (html) {
+                if (html && paintLogin(html) && document.querySelector('form[action*="login"]')) {
+                    try {
+                        window.history.replaceState(null, '', LOGIN_URL);
+                    } catch (e) {}
                     return;
                 }
-                return hit.text().then(function (html) {
-                    window.history.replaceState(null, '', LOGIN_URL);
-                    document.open();
-                    document.write(html);
-                    document.close();
-                });
-            }).catch(function () {
-                window.location.replace(LOGIN_URL);
-            });
+                navigate();
+            }).catch(navigate);
             return;
         }
-        window.location.replace(LOGIN_URL);
+        navigate();
     }
 
     function wipeClientSessionOnly() {

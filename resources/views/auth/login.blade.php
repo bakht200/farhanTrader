@@ -22,7 +22,7 @@
         <button type="button" class="mt-2 text-orange-700 underline" onclick="window.FTOffline?.checkNow?.().then((ok)=> ok && window.location.reload())">Retry connection</button>
     </div>
 
-    <form method="POST" action="{{ route('login') }}">
+    <form method="POST" action="{{ route('login') }}" data-ftpos-page="login">
         @csrf
 
         <!-- Email Address -->

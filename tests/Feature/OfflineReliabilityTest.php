@@ -27,7 +27,11 @@ class OfflineReliabilityTest extends TestCase
         $sw = file_get_contents(public_path('sw.js'));
 
         $this->assertNotFalse($sw);
-        $this->assertStringContainsString("cache.add('/login')", $sw);
+        $this->assertStringContainsString("'/__ftpos_login_shell'", $sw);
+        $this->assertStringContainsString('async function serveLoginHtml', $sw);
+        $this->assertStringContainsString('function htmlLooksLikeLogin', $sw);
+        $this->assertStringNotContainsString('function loginRedirect()', $sw);
+        $this->assertStringNotContainsString("cache.add('/login')", $sw);
         $this->assertStringContainsString("redirect: 'manual'", $sw);
         $this->assertStringContainsString("event.data?.type === 'LOGIN'", $sw);
         $this->assertStringContainsString("p === '/suppliers/anonymous-purchase'", $sw);
@@ -62,7 +66,9 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringNotContainsString('reg.unregister()', $guard);
         $this->assertStringNotContainsString('caches.delete', $guard);
         $this->assertStringContainsString('navigator.onLine !== false', $guard);
-        $this->assertStringContainsString("caches.match(LOGIN_URL)", $guard);
+        $this->assertStringContainsString('function findCachedLogin', $guard);
+        $this->assertStringContainsString('function paintLogin', $guard);
+        $this->assertStringContainsString('htmlLooksLikeLogin', $guard);
         $this->assertStringContainsString('persistLastBranchId', $session);
         $this->assertStringContainsString('browserIsOffline', $session);
         $this->assertStringNotContainsString('window.location.reload()', $session);
@@ -74,6 +80,8 @@ class OfflineReliabilityTest extends TestCase
 
         $this->assertNotFalse($prefetch);
         $this->assertStringContainsString("'/login'", $prefetch);
+        $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
+        $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
         $this->assertStringContainsString("ftpos-pages-v12", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
@@ -257,15 +265,30 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('notifyServiceWorkerLogin', $runtime);
         $this->assertStringContainsString('persistLastBranchId', $runtime);
         $this->assertStringContainsString('warmOfflineShells', $runtime);
+        $this->assertStringContainsString("'/__ftpos_login_shell'", $runtime);
         $this->assertStringContainsString('resolveOfflineBranchId', $runtime);
         $this->assertStringContainsString('expandCachedProductsToPosCards', file_get_contents(resource_path('views/pos/index.blade.php')));
         $this->assertStringContainsString('Pick a branch while online', file_get_contents(resource_path('views/pos/index.blade.php')));
         $this->assertStringContainsString('skipped_catalog', file_get_contents(resource_path('js/offline/sync.js')));
     }
 
+    public function test_signed_in_user_can_pin_the_login_shell(): void
+    {
+        $branch = $this->makeBranch('Login Shell Shop');
+        $user = $this->makeBranchUser($branch);
+        $this->actingAs($user);
+
+        $this->get('/login')->assertRedirect();
+        $this->get('/__ftpos_login_shell')
+            ->assertOk()
+            ->assertSee('Sign In')
+            ->assertSee('data-ftpos-page="login"', false);
+    }
+
     public function test_guest_login_page_opens_for_offline_shell(): void
     {
-        $this->get('/login')->assertOk()->assertSee('Sign In')->assertSee('Upload to cloud');
+        $this->get('/login')->assertOk()->assertSee('Sign In')->assertSee('Upload to cloud')->assertSee('data-ftpos-page="login"', false);
+        $this->get('/__ftpos_login_shell')->assertOk()->assertSee('Sign In')->assertSee('data-ftpos-page="login"', false);
         $html = file_get_contents(public_path('offline.html'));
         $this->assertNotFalse($html);
         $this->assertStringContainsString('You are offline', $html);

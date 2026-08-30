@@ -154,17 +154,27 @@ async function cacheLoginShell() {
         return;
     }
     try {
-        const res = await fetch('/login', {
-            credentials: 'same-origin',
-            cache: 'no-store',
-            headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
-        });
-        if (!res.ok) {
+        const urls = ['/__ftpos_login_shell', '/login'];
+        for (const url of urls) {
+            const res = await fetch(url, {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                redirect: 'manual',
+                headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+            });
+            if (!res.ok) {
+                continue;
+            }
+            const html = await res.clone().text();
+            if (html.includes('<div data-ftpos-page="dashboard"')
+                || !(html.includes('data-ftpos-page="login"') || (html.includes('Sign In') && html.includes('name="email"')))) {
+                continue;
+            }
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put('/login', res.clone());
+            await cache.put(new URL('/login', window.location.origin).href, res.clone());
             return;
         }
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put('/login', res.clone());
-        await cache.put(new URL('/login', window.location.origin).href, res.clone());
     } catch {
         // ignore
     }
@@ -198,6 +208,7 @@ async function warmOfflineShells() {
         return;
     }
     await pinDashboardNow();
+    await cacheLoginShell();
     prefetchAppShells(CORE_SHELLS).catch(() => {});
     try {
         if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {

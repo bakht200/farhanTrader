@@ -11,6 +11,11 @@ use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\Auth\VerifyEmailController;
 use Illuminate\Support\Facades\Route;
 
+// Same Sign In HTML as /login, but guest middleware does not 302 away when
+// this PC is already signed in. Used only to pin the page for offline logout.
+Route::get('__ftpos_login_shell', [AuthenticatedSessionController::class, 'create'])
+    ->name('login.shell');
+
 Route::middleware('guest')->group(function () {
     // Signup disabled:
     // Route::get('register', [RegisteredUserController::class, 'create'])

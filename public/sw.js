@@ -64,10 +64,22 @@ self.addEventListener('install', (event) => {
     const cache = await caches.open(CACHE_NAME);
     await cache.addAll(SHELL_URLS);
     try {
-      await cache.add('/login');
-    } catch (e) {
-      // Login may 302 if a session cookie is present during install.
-    }
+      let loginRes = await fetch('/login', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        redirect: 'manual',
+      });
+      if (!loginRes || !loginRes.ok || isRedirectResponse(loginRes)) {
+        loginRes = await fetch('/__ftpos_login_shell', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          redirect: 'manual',
+        });
+      }
+      if (loginRes && loginRes.ok && !isRedirectResponse(loginRes)) {
+        await storePage(cache, '/login', loginRes);
+      }
+    } catch (e) {}
     await self.skipWaiting();
   })());
 });
@@ -151,6 +163,22 @@ function htmlLooksLikeDashboard(buf) {
   }
 }
 
+function htmlLooksLikeLogin(buf) {
+  try {
+    const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+    const text = new TextDecoder().decode(slice);
+    if (text.includes('data-ftpos-page="login"')) {
+      return true;
+    }
+    if (text.includes('<div data-ftpos-page="dashboard"')) {
+      return false;
+    }
+    return text.includes('Sign In') && text.includes('name="email"');
+  } catch (e) {
+    return false;
+  }
+}
+
 function posCatalogIsEmpty(buf) {
   try {
     const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
@@ -172,10 +200,6 @@ function isOfflineHtml(res) {
   return String(res && res.url ? res.url : '').includes('/offline.html');
 }
 
-function loginRedirect() {
-  return Response.redirect(new URL('/login', self.location.origin).href, 302);
-}
-
 function fallbackDocument() {
   return new Response(
     '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farhan Traders</title></head><body style="font-family:sans-serif;padding:24px;max-width:32rem;margin:40px auto"><h1>Farhan Traders</h1><p>This page is not on this PC yet. Open the site once while online, then you can use it with Wi-Fi off.</p><p><a href="/login">Sign In</a> · <a href="/dashboard">Dashboard</a></p></body></html>',
@@ -188,6 +212,12 @@ async function firstHtml(paths) {
     const hit = await caches.match(path, { ignoreSearch: true })
       || await caches.match(new URL(path, self.location.origin).href, { ignoreSearch: true });
     if (hit && !isOfflineHtml(hit)) {
+      if (path === '/login' || String(path).replace(/\/+$/, '') === '/login') {
+        const buf = await hit.clone().arrayBuffer();
+        if (!htmlLooksLikeLogin(buf)) {
+          continue;
+        }
+      }
       return hit;
     }
   }
@@ -197,7 +227,7 @@ async function firstHtml(paths) {
 async function offlineNavigationFallback(requestPath, preferLogin) {
   const p = (requestPath || '').replace(/\/+$/, '') || '/';
   if (preferLogin) {
-    return (await firstHtml(['/login', APP_SHELL_PATH, '/offline.html'])) || fallbackDocument();
+    return serveLoginHtml();
   }
   if (isCustomerAppPath(p)) {
     return (await firstHtml(['/customers', APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
@@ -228,10 +258,13 @@ async function storePage(cache, path, res) {
   }
   // Rebuild response so cache.put works even after redirects
   const buf = await res.clone().arrayBuffer();
+  if (isLoginPath(path) && !htmlLooksLikeLogin(buf)) {
+    return false;
+  }
   if (isPosPath(path) && posCatalogIsEmpty(buf)) {
     return false;
   }
-  if (!isDashboardPath(path) && htmlLooksLikeDashboard(buf)) {
+  if (!isDashboardPath(path) && !isLoginPath(path) && htmlLooksLikeDashboard(buf)) {
     return false;
   }
   const contentType = res.headers.get('Content-Type') || 'text/html; charset=UTF-8';
@@ -264,12 +297,13 @@ async function precacheUrls(urls) {
   const cache = await caches.open(CACHE_NAME);
   for (const path of urls) {
     try {
-      const res = await fetch(path, {
+      const fetchPath = isLoginPath(path) ? '/__ftpos_login_shell' : path;
+      const res = await fetch(fetchPath, {
         credentials: 'same-origin',
         cache: 'no-cache',
-        redirect: 'follow',
+        redirect: isLoginPath(path) ? 'manual' : 'follow',
       });
-      await storePage(cache, path, res);
+      await storePage(cache, isLoginPath(path) ? '/login' : path, res);
     } catch (e) {
       // ignore individual failures
     }
@@ -341,23 +375,44 @@ function redirectGoesToLogin(res) {
 }
 
 async function cachedLoginPage() {
-  return await caches.match(new URL('/login', self.location.origin).href)
-    || await caches.match('/login');
+  const keys = await caches.keys();
+  for (const name of keys) {
+    try {
+      const cache = await caches.open(name);
+      const hit = await cache.match('/login', { ignoreSearch: true })
+        || await cache.match(new URL('/login', self.location.origin).href, { ignoreSearch: true });
+      if (hit && !isOfflineHtml(hit)) {
+        const buf = await hit.clone().arrayBuffer();
+        if (htmlLooksLikeLogin(buf)) {
+          return hit;
+        }
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function serveLoginHtml() {
+  return (await cachedLoginPage()) || fallbackDocument();
 }
 
 async function handleAuthNavigation(request) {
+  if (browserIsOffline()) {
+    return serveLoginHtml();
+  }
   try {
     const res = await fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'manual' });
-    if (res && res.ok) {
-      try {
-        const cache = await caches.open(CACHE_NAME);
-        const path = new URL(request.url).pathname;
-        await storePage(cache, path, res.clone());
-      } catch (e) {}
+    if (!res || !res.ok || isRedirectResponse(res)) {
+      return serveLoginHtml();
     }
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      const path = new URL(request.url).pathname;
+      await storePage(cache, path, res.clone());
+    } catch (e) {}
     return res;
   } catch (e) {
-    return (await cachedLoginPage()) || (browserIsOffline() ? fallbackDocument() : loginRedirect());
+    return serveLoginHtml();
   }
 }
 
@@ -373,30 +428,18 @@ async function handleNavigation(request) {
   }
 
   if (loggedOut && !isLoginPath(path)) {
-    if (offline) {
-      return offlineNavigationFallback(path, true);
-    }
-    try {
-      const res = await fetchWithTimeout(request, 2500);
-      if (isRedirectResponse(res)) {
-        return res;
-      }
-      if (res && responseIsLogin(res)) {
-        return res;
-      }
-      if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
-        await persistLoggedOut(false);
-        return res;
-      }
-    } catch (e) {}
-    return (await cachedLoginPage()) || (offline ? fallbackDocument() : loginRedirect());
+    return serveLoginHtml();
   }
 
-  if (isLoginPath(path) || isLogoutPath(path)) {
-    if (offline && isLoginPath(path)) {
-      return (await cachedLoginPage()) || fallbackDocument();
+  if (isLoginPath(path)) {
+    if (offline || loggedOut) {
+      return serveLoginHtml();
     }
     return handleAuthNavigation(request);
+  }
+
+  if (isLogoutPath(path)) {
+    return serveLoginHtml();
   }
 
   const cached = await matchNavigation(request);
@@ -423,10 +466,16 @@ async function handleNavigation(request) {
       if (!offline && !vaultSession) {
         await notifySessionExpired();
       }
-      return (await cachedLoginPage()) || (offline ? fallbackDocument() : loginRedirect());
+      return serveLoginHtml();
     }
     if (isRedirectResponse(res)) {
-      return res;
+      if (cacheUsable) {
+        return cached;
+      }
+      if (offline) {
+        return offlineNavigationFallback(path, false);
+      }
+      return fallbackDocument();
     }
     if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
       loggedOut = false;
@@ -450,8 +499,7 @@ async function handleNavigation(request) {
 async function matchNavigation(request) {
   const url = new URL(request.url);
   if (loggedOut && !isLoginPath(url.pathname)) {
-    return caches.match(new URL('/login', self.location.origin).href)
-      || caches.match('/login');
+    return cachedLoginPage();
   }
   const cache = await caches.open(CACHE_NAME);
   const candidates = [
