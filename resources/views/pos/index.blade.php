@@ -1293,6 +1293,7 @@
                     name: product.name,
                     purchase_price: parseFloat(product.purchase_price) || 0,
                     lot_purchase_price: parseFloat(product.purchase_price) || 0,
+                    lot_extra_price: parseFloat(product.extra_price) || 0,
                     extra_price: parseFloat(product.extra_price) || 0,
                     selling_price: cartPrice,
                     retail_price: parseFloat(product.retail_price || product.selling_price) || 0,
@@ -1384,15 +1385,26 @@
             const costSource = product || item;
             const baseId = getProductCostBaseUnitId(costSource);
             const raw = parseFloat(item.lot_purchase_price ?? product?.purchase_price ?? item.purchase_price) || 0;
+            const rawExtra = parseFloat(item.lot_extra_price ?? product?.extra_price ?? item.extra_price) || 0;
             const lineUnit = Number(item.unit_id);
             item.skip_sell_vs_purchase_warning = false;
 
+            function applyScaledExtra(lineItem, basePurchase, scaledPurchase, baseExtra) {
+                if (basePurchase > 0 && scaledPurchase !== basePurchase) {
+                    lineItem.extra_price = baseExtra * (scaledPurchase / basePurchase);
+                } else {
+                    lineItem.extra_price = baseExtra;
+                }
+            }
+
             if (!lineUnit || !baseId || Number.isNaN(lineUnit) || Number.isNaN(baseId)) {
                 item.purchase_price = raw;
+                applyScaledExtra(item, raw, raw, rawExtra);
                 return;
             }
             if (lineUnit === baseId) {
                 item.purchase_price = raw;
+                applyScaledExtra(item, raw, raw, rawExtra);
                 return;
             }
 
@@ -1405,6 +1417,7 @@
                 const fLineToBase = await fetchFactor(lineUnit, baseId);
                 if (fLineToBase != null) {
                     item.purchase_price = raw * fLineToBase;
+                    applyScaledExtra(item, raw, item.purchase_price, rawExtra);
                     return;
                 }
             } catch (e) {
@@ -1415,6 +1428,7 @@
                 const fBaseToLine = await fetchFactor(baseId, lineUnit);
                 if (fBaseToLine != null) {
                     item.purchase_price = raw / fBaseToLine;
+                    applyScaledExtra(item, raw, item.purchase_price, rawExtra);
                     return;
                 }
             } catch (e) {
@@ -1428,10 +1442,12 @@
             const pLineCfg = parseFloat(suLine && suLine.selling_price) || 0;
             if (pBase > 0 && pLineCfg > 0) {
                 item.purchase_price = raw * (pLineCfg / pBase);
+                applyScaledExtra(item, raw, item.purchase_price, rawExtra);
                 return;
             }
 
             item.purchase_price = raw;
+            applyScaledExtra(item, raw, raw, rawExtra);
             item.skip_sell_vs_purchase_warning = true;
         }
 
@@ -1612,6 +1628,9 @@
                 if (catalogProduct && item.lot_purchase_price == null) {
                     item.lot_purchase_price = parseFloat(catalogProduct.purchase_price) || 0;
                 }
+                if (catalogProduct && item.lot_extra_price == null) {
+                    item.lot_extra_price = parseFloat(catalogProduct.extra_price) || 0;
+                }
                 
                 let itemTotal = quantity * sellingPrice;
                 let discount = 0;
@@ -1637,13 +1656,10 @@
                         <div class="text-xs text-gray-500">In Stock: ${parseFloat(maxSelectedQty || 0).toFixed(2)} ${unitName}</div>
                     `;
                 }
-                const extraPriceDisplay = extraPrice > 0
-                    ? `<div class="text-xs text-gray-400 mt-0.5">${formatCurrency(extraPrice)}</div>`
-                    : '';
                 const displayedPurchase = purchasePrice + extraPrice;
                 const purchasePriceDisplay = isCustom
                     ? '<div class="text-sm text-gray-400">-</div>'
-                    : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(displayedPurchase) : '****'}</div>${extraPriceDisplay}`;
+                    : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(displayedPurchase) : '****'}</div>`;
                 const remainingStockDisplay = isCustom
                     ? '<div class="text-xs text-blue-500">Custom</div>'
                     : `<div class="text-sm font-medium text-amber-600">${parseFloat(remainingSelectedQty || 0).toFixed(2)} ${unitName}</div>`;
@@ -3074,6 +3090,7 @@
                                 name: item.name,
                                 purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
                                 lot_purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                lot_extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
                                 extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
                                 selling_price: parseFloat(item.selling_price || product.retail_price) || 0,
                                 retail_price: parseFloat(product.retail_price || item.retail_price) || 0,
@@ -4381,6 +4398,7 @@
                             name: product.name,
                             purchase_price: parseFloat(product.purchase_price) || 0,
                             lot_purchase_price: parseFloat(product.purchase_price) || 0,
+                            lot_extra_price: parseFloat(product.extra_price) || 0,
                             extra_price: parseFloat(product.extra_price) || 0,
                             selling_price: parseFloat(item.unit_price || item.selling_price || product.retail_price) || 0,
                             retail_price: parseFloat(product.retail_price || product.selling_price) || 0,
@@ -4614,6 +4632,7 @@
                                 name: item.name,
                                 purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
                                 lot_purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                lot_extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
                                 extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
                                 selling_price: parseFloat(item.selling_price) || 0,
                                 retail_price: parseFloat(item.retail_price || product.retail_price) || 0,

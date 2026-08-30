@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\ProductLot;
 use App\Models\SaleItem;
 use App\Models\Supplier;
+use App\Models\SupplierBill;
 use App\Models\Unit;
 use App\Services\BranchStockService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -242,6 +243,53 @@ class SupplierBillProductsTest extends TestCase
         $this->assertNotNull($lot);
         $this->assertEquals(18.5, (float) $lot->extra_price);
         $this->assertEquals(240.0, (float) $lot->purchase_price);
+    }
+
+    public function test_editing_supplier_bill_updates_lot_extra_price(): void
+    {
+        $branch = $this->makeBranch('PESHAWAR CHEMICAL');
+        $user = $this->makeBranchUser($branch);
+        $supplier = $this->makeSupplierForBranch($branch, ['name' => 'Farhan Ullah']);
+        $catalog = $this->catalog();
+
+        $this->actingAs($user);
+        $this->post(route('suppliers.transactions.store', $supplier), $this->billPayload([
+            'product_name' => 'EXTRA FIX SUGAR',
+            'quantity' => 2,
+            'unit_price' => 240,
+            'extra_price' => 11000,
+            'total' => 480,
+            'category_id' => $catalog['category']->id,
+            'unit_id' => $catalog['unit']->id,
+            'selling_type' => 'both',
+        ]))->assertRedirect(route('suppliers.show', $supplier));
+
+        $product = Product::query()->where('name', 'EXTRA FIX SUGAR')->first();
+        $bill = SupplierBill::query()->where('supplier_id', $supplier->id)->latest('id')->first();
+        $lot = ProductLot::query()->where('product_id', $product->id)->first();
+        $this->assertNotNull($bill);
+        $this->assertNotNull($lot);
+        $this->assertEquals(11000.0, (float) $lot->extra_price);
+
+        $this->put(route('suppliers.bills.update', [$supplier, $bill]), [
+            'bill_date' => now()->toDateString(),
+            'bill_amount' => 480,
+            'products' => [[
+                'product_id' => $product->id,
+                'product_name' => $product->name,
+                'product_sku' => $product->sku,
+                'unit_id' => $catalog['unit']->id,
+                'quantity' => 2,
+                'unit_price' => 240,
+                'extra_price' => 250,
+                'discount' => 0,
+                'tax' => 0,
+                'total' => 480,
+            ]],
+        ])->assertRedirect(route('suppliers.show', $supplier));
+
+        $this->assertEquals(250.0, (float) $lot->fresh()->extra_price);
+        $this->assertEquals(250.0, (float) $product->fresh()->getAttributes()['extra_price']);
     }
 
     public function test_pos_sale_decrements_only_the_selected_lot(): void

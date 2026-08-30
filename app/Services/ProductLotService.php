@@ -15,6 +15,23 @@ class ProductLotService
      * on this branch adds to that lot. A different purchase rate creates a new lot
      * so POS can show old and new rates side by side.
      */
+    /**
+     * Keep lot purchase/extra in sync when a supplier bill line is edited.
+     */
+    public function syncLotsFromBillLine(Product $product, int $billId, array $line): void
+    {
+        $purchase = round((float) ($line['unit_price'] ?? $line['purchase_price'] ?? 0), 2);
+        $extra = round((float) ($line['extra_price'] ?? 0), 2);
+
+        ProductLot::query()
+            ->where('supplier_bill_id', $billId)
+            ->where('product_id', $product->id)
+            ->update([
+                'purchase_price' => $purchase,
+                'extra_price' => $extra,
+            ]);
+    }
+
     public function receive(
         Product $product,
         array $line,

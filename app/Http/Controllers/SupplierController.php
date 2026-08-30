@@ -996,6 +996,12 @@ class SupplierController extends Controller
                     $productId = (int) $product->id;
                     $quantity = (float) ($productData['quantity'] ?? 0);
 
+                    app(\App\Services\ProductLotService::class)->syncLotsFromBillLine(
+                        $product,
+                        (int) $bill->id,
+                        $productData
+                    );
+
                     SupplierBillItem::create([
                         'supplier_bill_id' => $bill->id,
                         'product_id' => $productId,
