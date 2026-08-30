@@ -577,16 +577,53 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const offline = browserIsOffline();
+
+  // Sign In POST is a document navigation. Never send it to the network
+  // when the link is down — that is Chrome's dinosaur page.
+  if (isLoginPath(url.pathname) && req.method === 'POST') {
+    event.respondWith((async () => {
+      if (browserIsOffline()) {
+        return serveLoginHtml();
+      }
+      try {
+        const res = await fetch(req, { credentials: 'same-origin', redirect: 'manual' });
+        if (isRedirectResponse(res)) {
+          const loc = res.headers.get('Location');
+          if (loc) {
+            return Response.redirect(new URL(loc, self.location.origin).href, 302);
+          }
+          return serveLoginHtml();
+        }
+        if (res && res.ok) {
+          return res;
+        }
+      } catch (e) {}
+      return serveLoginHtml();
+    })());
+    return;
+  }
+
   // Logout POST is a document navigation. Never send it to the network
   // when Wi‑Fi is off — that is the Chrome dinosaur page.
   if (req.mode === 'navigate' && isLogoutPath(url.pathname)) {
-    if (browserIsOffline()) {
+    if (offline) {
       event.respondWith((async () => {
         await persistLoggedOut(true);
         await persistVaultSession(false);
-        return (await cachedLoginPage()) || fallbackDocument();
+        return serveLoginHtml();
       })());
+      return;
     }
+    return;
+  }
+
+  if (req.mode === 'navigate' && offline) {
+    event.respondWith(handleNavigation(new Request(req.url, {
+      method: 'GET',
+      mode: 'navigate',
+      credentials: 'same-origin',
+    })));
     return;
   }
 

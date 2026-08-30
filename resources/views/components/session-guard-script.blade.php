@@ -174,6 +174,15 @@
         setTimeout(goLogin, 3000);
     };
 
+    var loginForm = document.querySelector('form[action*="login"]');
+    if (loginForm) {
+        loginForm.addEventListener('submit', function (event) {
+            if (navigator.onLine === false) {
+                event.preventDefault();
+            }
+        }, true);
+    }
+
     var logoutForm = document.getElementById('ftpos-logout-form');
     if (logoutForm) {
         logoutForm.addEventListener('submit', function (event) {

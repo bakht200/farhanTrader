@@ -295,16 +295,21 @@ async function setupLoginForm() {
 
     // Stash password for vault enroll after successful online login
     form.addEventListener('submit', async (event) => {
+        event.preventDefault();
         if (submitting) {
             return;
         }
 
         const email = emailInput?.value || '';
         const password = passwordInput?.value || '';
-        const browserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+        let serverUp = false;
+        try {
+            serverUp = await checkNow();
+        } catch {
+            serverUp = false;
+        }
 
-        if (browserOnline) {
-            event.preventDefault();
+        if (serverUp) {
             submitting = true;
             sessionStorage.setItem(PASSWORD_STASH_KEY, password);
             try {
@@ -315,8 +320,6 @@ async function setupLoginForm() {
             await notifyServiceWorkerLogin();
             form.submit();
             return;
-        } else {
-            event.preventDefault();
         }
 
         try {

@@ -92,7 +92,7 @@ class OfflinePagesTest extends TestCase
 
         $this->get('/dashboard')
             ->assertOk()
-            ->assertSee('Version 2.9');
+            ->assertSee('Version 2.10');
     }
 
     public function test_sync_bootstrap_only_includes_the_current_branch_catalog(): void

@@ -53,6 +53,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('adoptOldCaches', $sw);
         $this->assertStringContainsString('/__ftpos_app_shell', $sw);
         $this->assertStringContainsString('a just-submitted Sign In must reach Laravel', $sw);
+        $this->assertStringContainsString('isLoginPath(url.pathname) && req.method === \'POST\'', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -70,6 +71,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('function findCachedLogin', $guard);
         $this->assertStringContainsString('function paintLogin', $guard);
         $this->assertStringContainsString('htmlLooksLikeLogin', $guard);
+        $this->assertStringContainsString("form[action*=\"login\"]", $guard);
         $this->assertStringContainsString('persistLastBranchId', $session);
         $this->assertStringContainsString('browserIsOffline', $session);
         $this->assertStringNotContainsString('window.location.reload()', $session);
@@ -261,7 +263,7 @@ class OfflineReliabilityTest extends TestCase
         $runtime = file_get_contents(resource_path('js/offline/index.js'));
 
         $this->assertNotFalse($runtime);
-        $this->assertStringContainsString('navigator.onLine !== false', $runtime);
+        $this->assertStringContainsString('checkNow', $runtime);
         $this->assertStringContainsString('Offline not enabled on this PC', $runtime);
         $this->assertStringContainsString('notifyServiceWorkerLogin', $runtime);
         $this->assertStringContainsString('persistLastBranchId', $runtime);
