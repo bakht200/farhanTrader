@@ -11,7 +11,7 @@
         window.location.replace(LOGIN_URL);
     }
 
-    function wipeCachesAndWorker() {
+    function wipeClientSessionOnly() {
         try {
             if (navigator.serviceWorker && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.controller.postMessage({ type: 'LOGOUT' });
@@ -22,20 +22,8 @@
                 window.FTOffline.clearLocalSession();
             }
         } catch (e) {}
-        var jobs = [];
-        if ('caches' in window) {
-            jobs.push(caches.keys().then(function (keys) {
-                return Promise.all(keys.filter(function (k) {
-                    return k.indexOf('ftpos-') === 0;
-                }).map(function (k) { return caches.delete(k); }));
-            }).catch(function () {}));
-        }
-        if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-            jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
-                return Promise.all(regs.map(function (reg) { return reg.unregister(); }));
-            }).catch(function () {}));
-        }
-        return Promise.all(jobs).catch(function () {});
+        // Keep the service worker and cached pages so this PC can sign in with Wi‑Fi off.
+        return Promise.resolve();
     }
 
     if (navigator.serviceWorker) {
@@ -44,12 +32,12 @@
                 return;
             }
             window.__ftposLoggingOut = true;
-            wipeCachesAndWorker().finally(goLogin);
+            wipeClientSessionOnly().finally(goLogin);
             setTimeout(goLogin, 800);
         });
     }
 
-    if (!onLogin) {
+    if (!onLogin && navigator.onLine !== false) {
         try {
             fetch('/sync/ping', {
                 credentials: 'same-origin',
@@ -58,7 +46,7 @@
             }).then(function (res) {
                 if ((res.status === 401 || res.status === 419) && !window.__ftposLoggingOut) {
                     window.__ftposLoggingOut = true;
-                    wipeCachesAndWorker().finally(goLogin);
+                    wipeClientSessionOnly().finally(goLogin);
                     setTimeout(goLogin, 800);
                 }
             }).catch(function () {});
@@ -110,7 +98,7 @@
             logoutReq,
             new Promise(function (resolve) { setTimeout(resolve, 2500); })
         ]).then(function () {
-            return wipeCachesAndWorker();
+            return wipeClientSessionOnly();
         }).finally(goLogin);
 
         setTimeout(goLogin, 3000);

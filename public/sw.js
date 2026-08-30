@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v9';
+const CACHE_NAME = 'ftpos-pages-v10';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
 const NAV_TIMEOUT_UNCACHED_MS = 4000;
@@ -131,6 +131,31 @@ function isOfflineHtml(res) {
 
 function loginRedirect() {
   return Response.redirect(new URL('/login', self.location.origin).href, 302);
+}
+
+function fallbackDocument() {
+  return new Response(
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Farhan Traders</title></head><body style="font-family:sans-serif;padding:24px;max-width:32rem;margin:40px auto"><h1>Farhan Traders</h1><p>This page is not on this PC yet. Open the site once while online, then you can use it with Wi-Fi off.</p><p><a href="/login">Sign In</a> · <a href="/dashboard">Dashboard</a></p></body></html>',
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store' } }
+  );
+}
+
+async function firstHtml(paths) {
+  for (const path of paths) {
+    const hit = await caches.match(path, { ignoreSearch: true })
+      || await caches.match(new URL(path, self.location.origin).href, { ignoreSearch: true });
+    if (hit) {
+      return hit;
+    }
+  }
+  return null;
+}
+
+async function offlineNavigationFallback(preferLogin) {
+  if (preferLogin) {
+    return (await firstHtml(['/login', '/offline.html', '/dashboard'])) || fallbackDocument();
+  }
+  return (await firstHtml(['/dashboard', '/login', '/offline.html'])) || fallbackDocument();
 }
 
 async function notifySessionExpired() {
@@ -267,7 +292,7 @@ async function handleAuthNavigation(request) {
     }
     return res;
   } catch (e) {
-    return (await cachedLoginPage()) || loginRedirect();
+    return (await cachedLoginPage()) || (browserIsOffline() ? fallbackDocument() : loginRedirect());
   }
 }
 
@@ -284,7 +309,7 @@ async function handleNavigation(request) {
 
   if (loggedOut && !isLoginPath(path)) {
     if (offline) {
-      return (await cachedLoginPage()) || loginRedirect();
+      return offlineNavigationFallback(true);
     }
     try {
       const res = await fetchWithTimeout(request, 2500);
@@ -299,12 +324,12 @@ async function handleNavigation(request) {
         return res;
       }
     } catch (e) {}
-    return (await cachedLoginPage()) || loginRedirect();
+    return (await cachedLoginPage()) || (offline ? fallbackDocument() : loginRedirect());
   }
 
   if (isLoginPath(path) || isLogoutPath(path)) {
     if (offline && isLoginPath(path)) {
-      return (await cachedLoginPage()) || handleAuthNavigation(request);
+      return (await cachedLoginPage()) || fallbackDocument();
     }
     return handleAuthNavigation(request);
   }
@@ -333,7 +358,7 @@ async function handleNavigation(request) {
       if (!offline && !vaultSession) {
         await notifySessionExpired();
       }
-      return (await cachedLoginPage()) || loginRedirect();
+      return (await cachedLoginPage()) || (offline ? fallbackDocument() : loginRedirect());
     }
     if (isRedirectResponse(res)) {
       return res;
@@ -348,7 +373,13 @@ async function handleNavigation(request) {
     }
   } catch (e) {}
 
-  return cached;
+  if (cached) {
+    return cached;
+  }
+  if (offline) {
+    return offlineNavigationFallback(false);
+  }
+  return fallbackDocument();
 }
 
 async function matchNavigation(request) {
@@ -430,6 +461,11 @@ self.addEventListener('fetch', (event) => {
   ) {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
+        const offline = browserIsOffline();
+        const cachedAsset = await cache.match(req) || await cache.match(url.pathname);
+        if (offline && cachedAsset) {
+          return cachedAsset;
+        }
         // Network-first for scripts so logout/session fixes are not stuck on an old bundle.
         if (url.pathname === '/sw.js' || url.pathname.startsWith('/build/') || url.pathname.endsWith('.js')) {
           try {
@@ -439,7 +475,16 @@ self.addEventListener('fetch', (event) => {
             }
             return fresh;
           } catch (e) {
-            return (await cache.match(req)) || Response.error();
+            if (cachedAsset) {
+              return cachedAsset;
+            }
+            if (url.pathname.endsWith('.js') || url.pathname.startsWith('/build/')) {
+              return new Response('/* offline */', {
+                status: 200,
+                headers: { 'Content-Type': 'application/javascript' },
+              });
+            }
+            return new Response('', { status: 200 });
           }
         }
         const cached = await cache.match(req);

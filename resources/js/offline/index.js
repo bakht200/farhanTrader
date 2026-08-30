@@ -273,6 +273,11 @@ async function setupLoginForm() {
             } catch {
                 // ignore
             }
+            try {
+                await navigator.serviceWorker?.ready;
+            } catch {
+                // ignore
+            }
             await notifyServiceWorkerLogin({ vault: true });
             showToast('Signed in offline');
             window.location.replace('/dashboard');

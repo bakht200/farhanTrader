@@ -6,7 +6,7 @@
 import { isOnline } from './connectivity';
 import { db } from './db';
 
-export const CACHE_NAME = 'ftpos-pages-v9';
+export const CACHE_NAME = 'ftpos-pages-v10';
 export const MAX_SUPPLIER_PREFETCH = 150;
 
 export const PRECACHE_ROUTES = [

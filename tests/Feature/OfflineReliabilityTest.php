@@ -40,6 +40,9 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('function redirectGoesToLogin', $sw);
         $this->assertStringContainsString('Never ask Laravel for a session then', $sw);
         $this->assertStringContainsString("'/__ftpos_vault_session'", $sw);
+        $this->assertStringContainsString('function fallbackDocument()', $sw);
+        $this->assertStringContainsString('offlineNavigationFallback', $sw);
+        $this->assertStringContainsString('ftpos-pages-v10', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -49,6 +52,10 @@ class OfflineReliabilityTest extends TestCase
         $this->assertNotFalse($session);
         $this->assertStringContainsString('Keep the service worker, page caches, vault hashes, and catalog', $session);
         $this->assertStringNotContainsString('serviceWorker.getRegistrations()', $session);
+        $guard = file_get_contents(resource_path('views/components/session-guard-script.blade.php'));
+        $this->assertStringContainsString('wipeClientSessionOnly', $guard);
+        $this->assertStringNotContainsString('reg.unregister()', $guard);
+        $this->assertStringNotContainsString('caches.delete', $guard);
         $this->assertStringContainsString('persistLastBranchId', $session);
         $this->assertStringContainsString('browserIsOffline', $session);
         $this->assertStringNotContainsString('window.location.reload()', $session);
@@ -60,7 +67,7 @@ class OfflineReliabilityTest extends TestCase
 
         $this->assertNotFalse($prefetch);
         $this->assertStringContainsString("'/login'", $prefetch);
-        $this->assertStringContainsString("ftpos-pages-v9", $prefetch);
+        $this->assertStringContainsString("ftpos-pages-v10", $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));
     }
