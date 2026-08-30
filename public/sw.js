@@ -306,6 +306,13 @@ async function precacheUrls(urls) {
       return;
     }
     try {
+      if (!isLoginPath(path)) {
+        const already = await cache.match(path, { ignoreSearch: true })
+          || await cache.match(new URL(path, self.location.origin).href, { ignoreSearch: true });
+        if (already && already.ok) {
+          continue;
+        }
+      }
       const fetchPath = isLoginPath(path) ? '/__ftpos_login_shell' : path;
       const res = await fetch(fetchPath, {
         credentials: 'same-origin',

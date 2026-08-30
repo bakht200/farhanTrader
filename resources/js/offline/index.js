@@ -12,7 +12,7 @@ import {
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier, queueOfflineSupplierBill, queueOfflineSupplierPayment, supplierWallet } from './outbox';
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
-import { prefetchAppShells, CACHE_NAME, CORE_SHELLS } from './prefetch';
+import { prefetchAppShells, CACHE_NAME, CORE_SHELLS, PRECACHE_ROUTES } from './prefetch';
 import { mountOfflineSupplierPanel } from './supplierPanel';
 import { mountOfflineListPages } from './listPages';
 import {
@@ -207,42 +207,49 @@ async function warmOfflineShells() {
     if (!isOnline()) {
         return;
     }
-    await pinDashboardNow();
-    await cacheLoginShell();
-    prefetchAppShells(CORE_SHELLS).catch(() => {});
-    try {
-        if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {
-            return;
-        }
-    } catch {
-        // ignore
-    }
-
-    const run = async () => {
-        if (!isOnline()) {
-            return;
-        }
-        try {
-            const result = await prefetchAppShells();
-            if (result.ok > 0) {
-                try {
-                    sessionStorage.setItem(`ftpos_shells_warmed_${APP_VERSION}`, '1');
-                } catch {
-                    // ignore
-                }
-                console.info(`[offline] precached ${result.ok} pages for offline use`);
-            }
-        } catch (e) {
-            console.warn('[offline] page precache failed', e);
-        }
-    };
-    if (typeof window.requestIdleCallback === 'function') {
-        window.requestIdleCallback(() => {
-            run();
-        }, { timeout: 8000 });
+    if (window.__ftposWarmingShells) {
         return;
     }
-    setTimeout(run, 1500);
+    window.__ftposWarmingShells = true;
+    try {
+        await pinDashboardNow();
+        await cacheLoginShell();
+        await prefetchAppShells(CORE_SHELLS);
+        try {
+            if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {
+                return;
+            }
+        } catch {
+            // ignore
+        }
+
+        const run = async () => {
+            if (!isOnline()) {
+                return;
+            }
+            try {
+                const result = await prefetchAppShells(PRECACHE_ROUTES);
+                if (result.ok > 0) {
+                    try {
+                        sessionStorage.setItem(`ftpos_shells_warmed_${APP_VERSION}`, '1');
+                    } catch {
+                        // ignore
+                    }
+                }
+            } catch (e) {
+                console.warn('[offline] page precache failed', e);
+            }
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(() => {
+                run();
+            }, { timeout: 12000 });
+            return;
+        }
+        setTimeout(run, 4000);
+    } finally {
+        window.__ftposWarmingShells = false;
+    }
 }
 
 async function refreshCsrfToken() {
@@ -459,7 +466,12 @@ async function applyBranchSwitchFromPage() {
         await clearPageCaches();
         if (isOnline()) {
             await bootstrap().catch(() => {});
-            warmOfflineShells();
+            try {
+                sessionStorage.removeItem(`ftpos_shells_warmed_${APP_VERSION}`);
+            } catch {
+                // ignore
+            }
+            await warmOfflineShells();
         }
     } catch (e) {
         console.warn('[offline] branch switch refresh failed', e);
@@ -507,7 +519,9 @@ export async function bootOfflineRuntime() {
                 return null;
             })
             .catch(() => {});
-        warmOfflineShells();
+        if (!window.__ftBranchSwitched) {
+            warmOfflineShells();
+        }
         pendingOutboxCount()
             .then((pending) => (pending > 0 ? syncNow() : null))
             .catch(() => {});

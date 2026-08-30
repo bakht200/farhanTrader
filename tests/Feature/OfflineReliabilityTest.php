@@ -91,6 +91,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("ftpos-pages-v12", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
+        $this->assertStringContainsString('options.includeSuppliers', $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));
     }
@@ -272,6 +273,8 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('notifyServiceWorkerLogin', $runtime);
         $this->assertStringContainsString('persistLastBranchId', $runtime);
         $this->assertStringContainsString('warmOfflineShells', $runtime);
+        $this->assertStringContainsString('__ftposWarmingShells', $runtime);
+        $this->assertStringContainsString('PRECACHE_ROUTES', $runtime);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $runtime);
         $this->assertStringContainsString('await notifyServiceWorkerLogin();', $runtime);
         $this->assertStringContainsString('resolveOfflineBranchId', $runtime);

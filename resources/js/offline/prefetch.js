@@ -16,7 +16,6 @@ export const CORE_SHELLS = [
     '/suppliers/create',
     '/sales/pos',
     '/products',
-    '/login',
 ];
 export const MAX_SUPPLIER_PREFETCH = 150;
 
@@ -189,7 +188,7 @@ async function collectSupplierPageUrls() {
 /**
  * Fetch each route while online (with cookies) and store in cache.
  */
-export async function prefetchAppShells(urls) {
+export async function prefetchAppShells(urls, options = {}) {
     if (!isOnline()) {
         return { ok: 0, failed: 0 };
     }
@@ -197,8 +196,9 @@ export async function prefetchAppShells(urls) {
         return { ok: 0, failed: 0 };
     }
 
-    const extra = await collectSupplierPageUrls();
-    const list = [...new Set([...(urls && urls.length ? urls : collectNavUrls()), ...extra])];
+    const extra = options.includeSuppliers ? await collectSupplierPageUrls() : [];
+    const list = [...new Set([...(urls && urls.length ? urls : collectNavUrls()), ...extra])]
+        .filter((path) => !isLoginPath(path));
     const worker = await waitForServiceWorker();
     if (worker) {
         worker.postMessage({ type: 'PRECACHE', urls: list });
