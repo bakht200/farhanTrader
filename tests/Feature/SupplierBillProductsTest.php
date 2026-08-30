@@ -292,6 +292,36 @@ class SupplierBillProductsTest extends TestCase
         $this->assertEquals(250.0, (float) $product->fresh()->getAttributes()['extra_price']);
     }
 
+    public function test_effective_extra_price_ignores_absurd_lot_extra(): void
+    {
+        $branch = $this->makeBranch('PESHAWAR CHEMICAL');
+        $user = $this->makeBranchUser($branch);
+        $supplier = $this->makeSupplierForBranch($branch, ['name' => 'Farhan Ullah']);
+        $catalog = $this->catalog();
+        $service = app(\App\Services\ProductLotService::class);
+
+        $this->actingAs($user);
+        $this->post(route('suppliers.transactions.store', $supplier), $this->billPayload([
+            'product_name' => 'GAJAR STYLE MURABA',
+            'quantity' => 1,
+            'unit_price' => 3500,
+            'extra_price' => 11000,
+            'total' => 3500,
+            'category_id' => $catalog['category']->id,
+            'unit_id' => $catalog['unit']->id,
+            'selling_type' => 'both',
+        ]))->assertRedirect();
+
+        $product = Product::query()->where('name', 'GAJAR STYLE MURABA')->first();
+        $product->update(['extra_price' => 250]);
+        $lot = ProductLot::query()->where('product_id', $product->id)->first();
+
+        $this->assertEquals(250.0, $service->effectiveExtraPrice($product->fresh(), $lot));
+
+        $cards = $service->posCards(collect([$product->fresh()]), $branch->id);
+        $this->assertEquals(250.0, (float) $cards->first()['extra_price']);
+    }
+
     public function test_pos_sale_decrements_only_the_selected_lot(): void
     {
         $branch = $this->makeBranch('POS LOTS');

@@ -762,7 +762,17 @@ class SyncController extends Controller
             $query->where('updated_at', '>', $sinceAt);
         }
 
-        return $query->orderBy('product_id')->orderBy('id')->get();
+        $lots = $query->with('product')->orderBy('product_id')->orderBy('id')->get();
+        $service = app(\App\Services\ProductLotService::class);
+
+        return $lots->map(function (ProductLot $lot) use ($service) {
+            $payload = $lot->toArray();
+            if ($lot->product) {
+                $payload['extra_price'] = $service->effectiveExtraPrice($lot->product, $lot);
+            }
+
+            return $payload;
+        });
     }
 
     protected function snapshotBranchId(User $user): ?int

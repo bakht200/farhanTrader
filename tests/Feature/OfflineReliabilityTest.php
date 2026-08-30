@@ -47,7 +47,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/__ftpos_vault_session'", $sw);
         $this->assertStringContainsString('function fallbackDocument()', $sw);
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
-        $this->assertStringContainsString('ftpos-pages-v12', $sw);
+        $this->assertStringContainsString('ftpos-pages-v13', $sw);
         $this->assertStringContainsString('htmlLooksLikeDashboard', $sw);
         $this->assertStringContainsString('isCustomerAppPath', $sw);
         $this->assertStringContainsString('adoptOldCaches', $sw);
@@ -88,7 +88,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/login'", $prefetch);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
-        $this->assertStringContainsString("ftpos-pages-v12", $prefetch);
+            $this->assertStringContainsString("ftpos-pages-v13", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('options.includeSuppliers', $prefetch);

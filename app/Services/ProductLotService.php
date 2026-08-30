@@ -11,11 +11,6 @@ use Illuminate\Support\Collection;
 class ProductLotService
 {
     /**
-     * Add received qty as a stock lot. Same product + same purchase/extra/unit
-     * on this branch adds to that lot. A different purchase rate creates a new lot
-     * so POS can show old and new rates side by side.
-     */
-    /**
      * Keep lot purchase/extra in sync when a supplier bill line is edited.
      */
     public function syncLotsFromBillLine(Product $product, int $billId, array $line): void
@@ -32,6 +27,58 @@ class ProductLotService
             ]);
     }
 
+    /**
+     * POS/sync extra when a lot still carries a bad value from before bill-edit lot sync.
+     */
+    public function effectiveExtraPrice(Product $product, ProductLot $lot): float
+    {
+        $master = round((float) ($product->getAttributes()['extra_price'] ?? 0), 2);
+        $lotExtra = round((float) $lot->extra_price, 2);
+        $purchase = round((float) $lot->purchase_price, 2);
+
+        if ($master <= 0 || $lotExtra === $master) {
+            return $lotExtra;
+        }
+
+        if ($purchase > 0 && $lotExtra > ($purchase * 2)) {
+            return $master;
+        }
+
+        return $lotExtra;
+    }
+
+    /**
+     * @return int Number of lots corrected in the database
+     */
+    public function repairStaleLotExtraPrices(?int $branchId = null): int
+    {
+        $query = ProductLot::query()->with('product');
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+
+        $fixed = 0;
+        foreach ($query->get() as $lot) {
+            $product = $lot->product;
+            if (! $product) {
+                continue;
+            }
+            $effective = $this->effectiveExtraPrice($product, $lot);
+            if (round((float) $lot->extra_price, 2) !== $effective) {
+                $lot->extra_price = $effective;
+                $lot->save();
+                $fixed++;
+            }
+        }
+
+        return $fixed;
+    }
+
+    /**
+     * Add received qty as a stock lot. Same product + same purchase/extra/unit
+     * on this branch adds to that lot. A different purchase rate creates a new lot
+     * so POS can show old and new rates side by side.
+     */
     public function receive(
         Product $product,
         array $line,
@@ -365,7 +412,7 @@ class ProductLotService
 
         $card['lot_id'] = $lot->id;
         $card['purchase_price'] = (float) $lot->purchase_price;
-        $card['extra_price'] = (float) $lot->extra_price;
+        $card['extra_price'] = $this->effectiveExtraPrice($product, $lot);
         $card['retail_price'] = (float) $lot->retail_price;
         $card['wholesale_price'] = (float) $lot->wholesale_price;
         $card['selling_price'] = $lotSelling;
