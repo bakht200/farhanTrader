@@ -85,6 +85,7 @@
                         <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
                         <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                         <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
+                        <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Extra</th>
                         <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qty</th>
                         <th class="px-2 sm:px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Actions</th>
                     </tr>
@@ -155,6 +156,14 @@
                             <span class="text-sm text-gray-900">{{ $defaultUnit['name'] ?? ($product->unit->short_name ?? 'N/A') }}</span>
                         </td>
                         <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
+                            @php $extraPrice = (float) ($product->extra_price ?? 0); @endphp
+                            @if($extraPrice > 0)
+                                <span class="text-sm font-medium text-gray-900">PKR {{ number_format($extraPrice, 2) }}</span>
+                            @else
+                                <span class="text-sm text-gray-400">—</span>
+                            @endif
+                        </td>
+                        <td class="px-2 sm:px-3 py-3 whitespace-nowrap">
                             <button type="button"
                                     class="js-stock-toggle text-sm text-gray-900 text-left"
                                     data-product-id="{{ $product->id }}"
@@ -196,7 +205,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="8" class="px-3 py-4 text-center text-gray-500">
+                        <td colspan="9" class="px-3 py-4 text-center text-gray-500">
                             No products found.
                         </td>
                     </tr>
