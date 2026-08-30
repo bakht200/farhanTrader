@@ -116,7 +116,10 @@ export async function enrollVaultWithPassword(password) {
 
     if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || 'Could not enroll offline vault.');
+        const detail = body.message
+            || body.errors?.password?.[0]
+            || `Could not enroll offline vault (${res.status}).`;
+        throw new Error(detail);
     }
 
     const data = await res.json();

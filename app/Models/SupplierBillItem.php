@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SupplierBillItem extends Model
 {
     protected $fillable = [
-        'branch_id', 'supplier_bill_id', 'product_id', 'product_name', 'product_sku',
+        'branch_id', 'supplier_bill_id', 'product_id', 'product_lot_id', 'product_name', 'product_sku',
         'quantity', 'unit_price', 'discount', 'tax', 'total'
     ];
 

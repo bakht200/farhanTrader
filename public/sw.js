@@ -1,30 +1,84 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v5';
+const CACHE_NAME = 'ftpos-pages-v9';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
-const NAV_TIMEOUT_ONLINE_MS = 2000;
-const NAV_TIMEOUT_UNCACHED_MS = 8000;
+const NAV_TIMEOUT_ONLINE_MS = 2500;
+const NAV_TIMEOUT_UNCACHED_MS = 4000;
+const NAV_TIMEOUT_POS_MS = 2500;
 
-/** Page runtime tells us when the link is actually usable. Default to cache. */
-let preferCache = true;
+/** Page runtime tells us when the link is actually usable. Network-first until told otherwise. */
+let preferCache = false;
 /** After logout or an expired-session redirect, do not serve cached app shells. */
 let loggedOut = false;
+/** Vault unlock on this PC — Laravel may have no cookie. Use cache if the server sends /login. */
+let vaultSession = false;
+const LOGGED_OUT_FLAG = '/__ftpos_logged_out';
+const VAULT_SESSION_FLAG = '/__ftpos_vault_session';
+
+async function persistFlag(path, enabled) {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    if (enabled) {
+      await cache.put(path, new Response('1', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain', 'X-Ftpos-Auth': '1' },
+      }));
+    } else {
+      await cache.delete(path);
+      await cache.delete(new URL(path, self.location.origin).href);
+    }
+  } catch (e) {}
+}
+
+async function persistLoggedOut(value) {
+  loggedOut = !!value;
+  await persistFlag(LOGGED_OUT_FLAG, loggedOut);
+}
+
+async function persistVaultSession(value) {
+  vaultSession = !!value;
+  await persistFlag(VAULT_SESSION_FLAG, vaultSession);
+}
+
+async function restoreLoggedOut() {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const hit = await cache.match(LOGGED_OUT_FLAG)
+      || await cache.match(new URL(LOGGED_OUT_FLAG, self.location.origin).href);
+    loggedOut = !!hit;
+    const vaultHit = await cache.match(VAULT_SESSION_FLAG)
+      || await cache.match(new URL(VAULT_SESSION_FLAG, self.location.origin).href);
+    vaultSession = !!vaultHit;
+  } catch (e) {}
+  return loggedOut;
+}
+
+function ackMessage(event) {
+  try {
+    event.ports && event.ports[0] && event.ports[0].postMessage({ ok: true });
+  } catch (e) {}
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_URLS)).then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(SHELL_URLS);
+    try {
+      await cache.add('/login');
+    } catch (e) {
+      // Login may 302 if a session cookie is present during install.
+    }
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => k !== CACHE_NAME && k.startsWith('ftpos-'))
-          .map((k) => caches.delete(k))
-      )
-    ).then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    const stale = keys.filter((k) => k !== CACHE_NAME && k.startsWith('ftpos-'));
+    await Promise.all(stale.map((k) => caches.delete(k)));
+    await restoreLoggedOut();
+    await self.clients.claim();
+  })());
 });
 
 function isLoginPath(pathname) {
@@ -35,6 +89,32 @@ function isLoginPath(pathname) {
 function isLogoutPath(pathname) {
   const p = (pathname || '').replace(/\/+$/, '') || '/';
   return p === '/logout' || p.startsWith('/logout/');
+}
+
+function isPosPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/sales/pos';
+}
+
+function isWriteNavigationPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/suppliers/anonymous-purchase'
+    || p === '/logout'
+    || p.startsWith('/logout/');
+}
+
+function isSupplierAppPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/suppliers' || p.startsWith('/suppliers/');
+}
+
+function posCatalogIsEmpty(buf) {
+  try {
+    const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+    return new TextDecoder().decode(slice).includes('data-ftpos-catalog="empty"');
+  } catch (e) {
+    return false;
+  }
 }
 
 function responseIsLogin(res) {
@@ -54,7 +134,7 @@ function loginRedirect() {
 }
 
 async function notifySessionExpired() {
-  loggedOut = true;
+  await persistLoggedOut(true);
   preferCache = false;
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   clients.forEach((client) => client.postMessage({ type: 'SESSION_EXPIRED' }));
@@ -64,12 +144,15 @@ async function storePage(cache, path, res) {
   if (!res || !res.ok) {
     return false;
   }
-  // Never store login HTML, and never store a login redirect under another route.
-  if (isLoginPath(path) || responseIsLogin(res)) {
+  // Never store a login page under another route (session expired redirect).
+  if (responseIsLogin(res) && !isLoginPath(path)) {
     return false;
   }
   // Rebuild response so cache.put works even after redirects
   const buf = await res.clone().arrayBuffer();
+  if (isPosPath(path) && posCatalogIsEmpty(buf)) {
+    return false;
+  }
   const contentType = res.headers.get('Content-Type') || 'text/html; charset=UTF-8';
   const stored = new Response(buf, {
     status: 200,
@@ -111,8 +194,23 @@ self.addEventListener('message', (event) => {
     preferCache = event.data.online !== true;
   }
   if (event.data?.type === 'LOGOUT') {
-    loggedOut = true;
     preferCache = false;
+    vaultSession = false;
+    event.waitUntil(Promise.all([
+      persistLoggedOut(true),
+      persistVaultSession(false),
+    ]).then(() => ackMessage(event)));
+    return;
+  }
+  if (event.data?.type === 'LOGIN') {
+    loggedOut = false;
+    vaultSession = event.data?.vault === true || browserIsOffline();
+    preferCache = browserIsOffline();
+    event.waitUntil(Promise.all([
+      persistLoggedOut(false),
+      persistVaultSession(true),
+    ]).then(() => ackMessage(event)));
+    return;
   }
   if (event.data?.type === 'PRECACHE' && Array.isArray(event.data.urls)) {
     event.waitUntil(precacheUrls(event.data.urls));
@@ -123,60 +221,124 @@ async function fetchWithTimeout(request, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(request, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin', redirect: 'follow' });
+    return await fetch(request, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin', redirect: 'manual' });
   } finally {
     clearTimeout(timer);
   }
 }
 
+function isRedirectResponse(res) {
+  return !!res && (res.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(res.status));
+}
+
+function browserIsOffline() {
+  return !!(self.navigator && self.navigator.onLine === false);
+}
+
+function redirectGoesToLogin(res) {
+  if (!isRedirectResponse(res)) {
+    return false;
+  }
+  try {
+    const loc = res.headers.get('Location');
+    if (!loc) {
+      return res.type === 'opaqueredirect';
+    }
+    return isLoginPath(new URL(loc, self.location.origin).pathname);
+  } catch (e) {
+    return false;
+  }
+}
+
+async function cachedLoginPage() {
+  return await caches.match(new URL('/login', self.location.origin).href)
+    || await caches.match('/login');
+}
+
 async function handleAuthNavigation(request) {
   try {
-    return await fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'follow' });
+    const res = await fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'manual' });
+    if (res && res.ok) {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const path = new URL(request.url).pathname;
+        await storePage(cache, path, res.clone());
+      } catch (e) {}
+    }
+    return res;
   } catch (e) {
-    return loginRedirect();
+    return (await cachedLoginPage()) || loginRedirect();
   }
 }
 
 async function handleNavigation(request) {
+  await restoreLoggedOut();
   const url = new URL(request.url);
   const path = url.pathname;
+  const forceLive = url.searchParams.has('_live');
+  const offline = browserIsOffline();
+
+  if (forceLive) {
+    preferCache = false;
+  }
 
   if (loggedOut && !isLoginPath(path)) {
-    return loginRedirect();
+    if (offline) {
+      return (await cachedLoginPage()) || loginRedirect();
+    }
+    try {
+      const res = await fetchWithTimeout(request, 2500);
+      if (isRedirectResponse(res)) {
+        return res;
+      }
+      if (res && responseIsLogin(res)) {
+        return res;
+      }
+      if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
+        await persistLoggedOut(false);
+        return res;
+      }
+    } catch (e) {}
+    return (await cachedLoginPage()) || loginRedirect();
   }
 
   if (isLoginPath(path) || isLogoutPath(path)) {
+    if (offline && isLoginPath(path)) {
+      return (await cachedLoginPage()) || handleAuthNavigation(request);
+    }
     return handleAuthNavigation(request);
   }
 
   const cached = await matchNavigation(request);
   const cacheUsable = cached && !isOfflineHtml(cached) && !responseIsLogin(cached);
 
-  // Fast path while the link is slow: serve cache, then check if the session died.
-  if (preferCache && cacheUsable) {
-    fetch(request, { cache: 'no-store', credentials: 'same-origin', redirect: 'follow' })
-      .then((res) => {
-        if (res && responseIsLogin(res)) {
-          return notifySessionExpired();
-        }
-        if (res && res.ok && !responseIsLogin(res)) {
-          loggedOut = false;
-        }
-      })
-      .catch(() => {});
+  // Wi‑Fi off still reaches 127.0.0.1. Never ask Laravel for a session then.
+  const useCacheFirst = !forceLive && cacheUsable && (preferCache || offline);
+
+  if (useCacheFirst) {
     return cached;
   }
 
   try {
     const res = await fetchWithTimeout(
       request,
-      cacheUsable ? NAV_TIMEOUT_ONLINE_MS : NAV_TIMEOUT_UNCACHED_MS
+      forceLive || isPosPath(path)
+        ? NAV_TIMEOUT_POS_MS
+        : (cacheUsable ? NAV_TIMEOUT_ONLINE_MS : NAV_TIMEOUT_UNCACHED_MS)
     );
-    if (res && responseIsLogin(res) && !isLoginPath(path)) {
-      await notifySessionExpired();
-      return loginRedirect();
+    if (redirectGoesToLogin(res) || (res && responseIsLogin(res) && !isLoginPath(path))) {
+      if (cacheUsable && (offline || preferCache || vaultSession)) {
+        return cached;
+      }
+      if (!offline && !vaultSession) {
+        await notifySessionExpired();
+      }
+      return (await cachedLoginPage()) || loginRedirect();
     }
-    if (res && res.ok && !responseIsLogin(res)) {
+    if (isRedirectResponse(res)) {
+      return res;
+    }
+    if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
       loggedOut = false;
       try {
         const cache = await caches.open(CACHE_NAME);
@@ -185,10 +347,6 @@ async function handleNavigation(request) {
       return res;
     }
   } catch (e) {}
-
-  if (cacheUsable) {
-    return cached;
-  }
 
   return cached;
 }
@@ -208,7 +366,7 @@ async function matchNavigation(request) {
   ];
   for (const key of candidates) {
     const hit = await cache.match(key, { ignoreSearch: true });
-    if (hit && !responseIsLogin(hit)) {
+    if (hit && !responseIsLogin(hit) && !isOfflineHtml(hit)) {
       return hit;
     }
     if (hit && isLoginPath(url.pathname)) {
@@ -216,13 +374,20 @@ async function matchNavigation(request) {
     }
   }
   const globalHit = await caches.match(request, { ignoreSearch: true });
-  if (globalHit && (!responseIsLogin(globalHit) || isLoginPath(url.pathname))) {
+  if (globalHit && !isOfflineHtml(globalHit) && (!responseIsLogin(globalHit) || isLoginPath(url.pathname))) {
     return globalHit;
   }
-  if (!loggedOut && (url.pathname === '/' || url.pathname === '')) {
+  if (isSupplierAppPath(url.pathname)) {
+    const list = await cache.match('/suppliers', { ignoreSearch: true })
+      || await cache.match(new URL('/suppliers', self.location.origin).href);
+    if (list && !responseIsLogin(list) && !isOfflineHtml(list)) {
+      return list;
+    }
+  }
+  if (!loggedOut) {
     const dash = await cache.match('/dashboard', { ignoreSearch: true })
       || await cache.match(new URL('/dashboard', self.location.origin).href);
-    if (dash && !responseIsLogin(dash)) {
+    if (dash && !responseIsLogin(dash) && !isOfflineHtml(dash)) {
       return dash;
     }
   }
@@ -240,11 +405,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname === '/up' || url.pathname.startsWith('/sync/')) {
+  if (url.pathname === '/up' || url.pathname === '/csrf-token' || url.pathname.startsWith('/sync/')) {
     return;
   }
 
   if (req.mode === 'navigate') {
+    if (isWriteNavigationPath(url.pathname)) {
+      return;
+    }
     event.respondWith(handleNavigation(req));
     return;
   }

@@ -86,7 +86,7 @@
                 <li>
                     <a href="{{ route('products.branch-inventory') }}" class="flex items-center px-3 py-2 rounded-md hover:bg-orange-50/70 {{ request()->routeIs('products.branch-inventory') ? 'bg-orange-50 text-orange-700 font-medium' : 'text-gray-700' }}">
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z"></path>
                         </svg>
                         All Branch Stock
                     </a>
@@ -95,7 +95,7 @@
                 <li>
                     <a href="{{ route('categories.index') }}" class="flex items-center px-3 py-2 rounded-md hover:bg-orange-50/70 {{ request()->routeIs('categories.*') ? 'bg-orange-50 text-orange-700 font-medium' : 'text-gray-700' }}">
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
                         </svg>
                         Category
                     </a>

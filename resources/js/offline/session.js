@@ -1,8 +1,91 @@
 import { clearLocalSession } from './authVault';
-import { CACHE_NAME } from './prefetch';
+import { getMeta, setMeta } from './db';
 
-export const APP_VERSION = '1.1';
+export const APP_VERSION = '2.3';
 export const LOGIN_URL = '/login';
+export const LAST_BRANCH_STORAGE_KEY = 'ftpos_last_branch_id';
+const VERSION_STORAGE_KEY = 'ftpos_app_version';
+
+export function persistLastBranchId(id) {
+    const n = Number(id);
+    if (!n) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(LAST_BRANCH_STORAGE_KEY, String(n));
+    } catch {
+        // private mode
+    }
+    setMeta('active_branch_id', n).catch(() => {});
+}
+
+export function readLastBranchId() {
+    try {
+        const n = Number(window.localStorage.getItem(LAST_BRANCH_STORAGE_KEY) || 0);
+        return n > 0 ? n : null;
+    } catch {
+        return null;
+    }
+}
+
+export async function resolveOfflineBranchId() {
+    const fromPage = Number(document.body?.getAttribute('data-ft-branch-id') || 0);
+    if (fromPage) {
+        return fromPage;
+    }
+    const fromStorage = readLastBranchId();
+    if (fromStorage) {
+        return fromStorage;
+    }
+    try {
+        const n = Number(await getMeta('active_branch_id', 0) || 0);
+        return n > 0 ? n : null;
+    } catch {
+        return null;
+    }
+}
+
+function postToServiceWorker(type, extra = {}) {
+    return new Promise((resolve) => {
+        try {
+            const controller = navigator.serviceWorker?.controller;
+            if (!controller) {
+                resolve();
+                return;
+            }
+            const channel = new MessageChannel();
+            const timer = setTimeout(resolve, 400);
+            channel.port1.onmessage = () => {
+                clearTimeout(timer);
+                resolve();
+            };
+            controller.postMessage({ type, ...extra }, [channel.port2]);
+        } catch {
+            resolve();
+        }
+    });
+}
+
+export function notifyServiceWorkerLogin(options = {}) {
+    return postToServiceWorker('LOGIN', { vault: !!options.vault });
+}
+
+function browserIsOffline() {
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
+
+/**
+ * Remember the running app version. Do not reload or wipe caches —
+ * the service worker already drops old ftpos-* names on activate.
+ */
+export async function applyHardRefreshIfNeeded() {
+    try {
+        window.localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+    } catch {
+        // private mode
+    }
+    return false;
+}
 
 export function isLoginPage() {
     return !!document.querySelector('form[action*="login"]')
@@ -10,11 +93,7 @@ export function isLoginPage() {
 }
 
 export function notifyServiceWorkerLogout() {
-    try {
-        navigator.serviceWorker?.controller?.postMessage({ type: 'LOGOUT' });
-    } catch {
-        // ignore
-    }
+    return postToServiceWorker('LOGOUT');
 }
 
 function postLogout() {
@@ -43,30 +122,14 @@ function postLogout() {
 }
 
 async function wipeClientSession() {
-    notifyServiceWorkerLogout();
+    await notifyServiceWorkerLogout();
     try {
         await clearLocalSession();
     } catch {
         // ignore
     }
-    if ('caches' in window) {
-        try {
-            const keys = await caches.keys();
-            await Promise.all(
-                keys
-                    .filter((k) => k.startsWith('ftpos-') || k === CACHE_NAME)
-                    .map((k) => caches.delete(k))
-            );
-        } catch {
-            // ignore
-        }
-    }
-    try {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((reg) => reg.unregister()));
-    } catch {
-        // ignore
-    }
+    // Keep the service worker, page caches, vault hashes, and catalog so
+    // the same PC can sign in again with no internet tomorrow.
 }
 
 function goToLogin() {
@@ -84,7 +147,7 @@ export async function redirectToLogin() {
 
 export async function logoutAndRedirect() {
     window.__ftposLoggingOut = true;
-    notifyServiceWorkerLogout();
+    await notifyServiceWorkerLogout();
     try {
         await postLogout();
     } catch {
@@ -95,7 +158,7 @@ export async function logoutAndRedirect() {
 }
 
 export async function probeServerSession() {
-    if (isLoginPage() || window.__ftposLoggingOut) {
+    if (isLoginPage() || window.__ftposLoggingOut || browserIsOffline()) {
         return;
     }
     try {
@@ -145,6 +208,7 @@ export function installSessionGuards() {
                 (res.status === 401 || res.status === 419)
                 && !isLoginPage()
                 && !shouldIgnoreAuthFailure(url)
+                && !browserIsOffline()
             ) {
                 redirectToLogin();
             }
@@ -156,7 +220,7 @@ export function installSessionGuards() {
 
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.addEventListener('message', (event) => {
-            if (event.data?.type === 'SESSION_EXPIRED') {
+            if (event.data?.type === 'SESSION_EXPIRED' && !browserIsOffline()) {
                 redirectToLogin();
             }
         });

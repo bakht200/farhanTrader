@@ -142,7 +142,7 @@ class BranchStockService
                 : ($existing?->selling_type ?: ($defaultType ?: 'both')),
         ];
 
-        foreach (['display_name', 'purchase_price', 'selling_price', 'retail_price', 'wholesale_price'] as $key) {
+        foreach (['display_name', 'purchase_price', 'selling_price', 'retail_price', 'wholesale_price', 'extra_price'] as $key) {
             if (array_key_exists($key, $overrides)) {
                 $payload[$key] = $overrides[$key];
             }

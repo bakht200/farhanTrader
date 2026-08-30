@@ -9,6 +9,7 @@ use App\Models\Order;
 use App\Models\Customer;
 use App\Models\Supplier;
 use App\Services\BranchStockService;
+use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -18,6 +19,14 @@ class DashboardController extends Controller
     public function index()
     {
         $user = auth()->user();
+        $needsBranchSelection = $user?->isAdmin() && ! CurrentBranch::id($user);
+
+        if ($needsBranchSelection) {
+            return view('dashboard', [
+                'user' => $user,
+                'needsBranchSelection' => true,
+            ]);
+        }
         
         // Weekly Earnings
         $startOfWeek = Carbon::now()->startOfWeek();

@@ -1,6 +1,6 @@
 import { startConnectivityMonitor, isOnline, checkNow } from './connectivity';
 import { mountOfflineBanner, showToast } from './banner';
-import { bootstrap, startSyncScheduler, syncNow } from './sync';
+import { bootstrap, startSyncScheduler, syncNow, uploadPendingToCloud } from './sync';
 import {
     enrollVaultWithPassword,
     unlockOffline,
@@ -9,35 +9,140 @@ import {
     clearLocalSession,
     listVaultEmails,
 } from './authVault';
-import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier } from './outbox';
+import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier, queueOfflineSupplierBill, queueOfflineSupplierPayment, supplierWallet } from './outbox';
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
 import { prefetchAppShells, CACHE_NAME } from './prefetch';
+import { mountOfflineSupplierPanel } from './supplierPanel';
 import {
     isLoginPage,
+    APP_VERSION,
+    applyHardRefreshIfNeeded,
     installSessionGuards,
     logoutAndRedirect,
     redirectToLogin,
     probeServerSession,
+    notifyServiceWorkerLogin,
+    persistLastBranchId,
+    readLastBranchId,
+    resolveOfflineBranchId,
 } from './session';
 
 const PASSWORD_STASH_KEY = 'ftpos_enroll_password';
 
+function showEnrollFailure(message) {
+    let el = document.getElementById('ftpos-enroll-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'ftpos-enroll-banner';
+        el.setAttribute('role', 'alert');
+        el.style.cssText = [
+            'position:fixed',
+            'top:0',
+            'left:0',
+            'right:0',
+            'z-index:10002',
+            'background:#fef3c7',
+            'color:#92400e',
+            'padding:12px 16px',
+            'font-size:14px',
+            'text-align:center',
+            'border-bottom:1px solid #f59e0b',
+        ].join(';');
+        document.body.prepend(el);
+    }
+    el.textContent = '';
+    const text = document.createElement('span');
+    text.textContent = message || 'Offline not enabled on this PC. Stay online and sign in again.';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.textContent = 'Retry';
+    retry.style.cssText = 'margin-left:12px;background:#92400e;color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px';
+    retry.addEventListener('click', async () => {
+        retry.disabled = true;
+        try {
+            if (sessionStorage.getItem(PASSWORD_STASH_KEY)) {
+                await maybeEnrollAfterLogin();
+                return;
+            }
+            if (await hasAnyVault()) {
+                await refreshOfflineCatalog();
+                showToast('Offline access enabled on this device');
+                clearEnrollBanner();
+                return;
+            }
+            showToast('Sign out, stay online, and sign in once more.');
+        } catch (e) {
+            showToast(e.message || 'Retry failed');
+        } finally {
+            retry.disabled = false;
+        }
+    });
+    el.appendChild(text);
+    el.appendChild(retry);
+}
+
+function clearEnrollBanner() {
+    const banner = document.getElementById('ftpos-enroll-banner');
+    if (banner) {
+        banner.remove();
+    }
+}
+
+async function refreshOfflineCatalog() {
+    await bootstrap();
+    await prefetchAppShells().catch(() => {});
+}
+
 async function maybeEnrollAfterLogin() {
     const password = sessionStorage.getItem(PASSWORD_STASH_KEY);
     if (!password) {
+        return false;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return false;
+    }
+    try {
+        await refreshCsrfToken().catch(() => {});
+        await enrollVaultWithPassword(password);
+        sessionStorage.removeItem(PASSWORD_STASH_KEY);
+        try {
+            await refreshOfflineCatalog();
+        } catch (e) {
+            console.warn('[offline] catalog refresh failed after enroll', e);
+        }
+        showToast('Offline access enabled on this device');
+        clearEnrollBanner();
+        return true;
+    } catch (e) {
+        console.warn('[offline] enroll failed', e);
+        showEnrollFailure(e.message || 'Offline not enabled on this PC. Stay online and sign in again.');
+        showToast(e.message || 'Could not enable offline access on this device');
+        return false;
+    }
+}
+
+async function cacheLoginShell() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         return;
     }
-    sessionStorage.removeItem(PASSWORD_STASH_KEY);
-    if (!isOnline()) {
+    if (!('caches' in window)) {
         return;
     }
     try {
-        await enrollVaultWithPassword(password);
-        await bootstrap();
-        showToast('Offline access enabled on this device');
-    } catch (e) {
-        console.warn('[offline] enroll failed', e);
+        const res = await fetch('/login', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+        });
+        if (!res.ok) {
+            return;
+        }
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put('/login', res.clone());
+        await cache.put(new URL('/login', window.location.origin).href, res.clone());
+    } catch {
+        // ignore
     }
 }
 
@@ -46,13 +151,61 @@ async function warmOfflineShells() {
         return;
     }
     try {
-        const result = await prefetchAppShells();
-        if (result.ok > 0) {
-            console.info(`[offline] precached ${result.ok} pages for offline use`);
+        if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {
+            return;
         }
-    } catch (e) {
-        console.warn('[offline] page precache failed', e);
+    } catch {
+        // ignore
     }
+    const run = async () => {
+        if (!isOnline()) {
+            return;
+        }
+        try {
+            const result = await prefetchAppShells();
+            if (result.ok > 0) {
+                try {
+                    sessionStorage.setItem(`ftpos_shells_warmed_${APP_VERSION}`, '1');
+                } catch {
+                    // ignore
+                }
+                console.info(`[offline] precached ${result.ok} pages for offline use`);
+            }
+        } catch (e) {
+            console.warn('[offline] page precache failed', e);
+        }
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(() => {
+            run();
+        }, { timeout: 8000 });
+        return;
+    }
+    setTimeout(run, 1500);
+}
+
+async function refreshCsrfToken() {
+    const res = await fetch('/csrf-token', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!res.ok) {
+        return false;
+    }
+    const data = await res.json().catch(() => ({}));
+    const token = data.token;
+    if (!token) {
+        return false;
+    }
+    document.querySelectorAll('input[name="_token"]').forEach((input) => {
+        input.value = token;
+    });
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) {
+        meta.setAttribute('content', token);
+    }
+    return true;
 }
 
 async function setupLoginForm() {
@@ -64,19 +217,45 @@ async function setupLoginForm() {
     const emailInput = form.querySelector('input[name="email"]');
     const passwordInput = form.querySelector('input[name="password"]');
     const gate = document.getElementById('ftpos-offline-gate');
+    let submitting = false;
+
+    const refreshIfVisible = () => {
+        if (document.visibilityState === 'visible') {
+            refreshCsrfToken().catch(() => {});
+        }
+    };
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) {
+            refreshCsrfToken().catch(() => {});
+        }
+    });
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    refreshCsrfToken().catch(() => {});
 
     // Stash password for vault enroll after successful online login
     form.addEventListener('submit', async (event) => {
-        const email = emailInput?.value || '';
-        const password = passwordInput?.value || '';
-
-        const online = isOnline() || await checkNow();
-        if (online) {
-            sessionStorage.setItem(PASSWORD_STASH_KEY, password);
-            return; // normal submit
+        if (submitting) {
+            return;
         }
 
-        event.preventDefault();
+        const email = emailInput?.value || '';
+        const password = passwordInput?.value || '';
+        const browserOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+
+        if (browserOnline) {
+            event.preventDefault();
+            submitting = true;
+            sessionStorage.setItem(PASSWORD_STASH_KEY, password);
+            try {
+                await refreshCsrfToken();
+            } catch {
+                // Native submit still works if the token on the page is fresh.
+            }
+            form.submit();
+            return;
+        } else {
+            event.preventDefault();
+        }
 
         try {
             const hasVault = await hasAnyVault();
@@ -89,8 +268,14 @@ async function setupLoginForm() {
             }
 
             await unlockOffline(email, password);
+            try {
+                navigator.serviceWorker?.controller?.postMessage({ type: 'CONNECTIVITY', online: false });
+            } catch {
+                // ignore
+            }
+            await notifyServiceWorkerLogin({ vault: true });
             showToast('Signed in offline');
-            window.location.href = '/dashboard';
+            window.location.replace('/dashboard');
         } catch (e) {
             showToast(e.message || 'Offline login failed');
             if (gate) {
@@ -108,16 +293,13 @@ async function setupLoginForm() {
 }
 
 async function guardAuthenticatedOffline() {
-    // When offline and visiting app pages without server session, local session is enough for UI that uses IndexedDB.
+    // Cached app shells survive logout. Offline still requires a vault unlock.
     if (isOnline()) {
         return;
     }
     const session = await getLocalSession();
-    if (!session && !(await hasAnyVault())) {
-        // Unenrolled offline — go to login/gate
-        if (!isLoginPage()) {
-            window.location.href = '/login';
-        }
+    if (!session && !isLoginPage()) {
+        window.location.href = '/login';
     }
 }
 
@@ -126,8 +308,8 @@ async function registerServiceWorker() {
         return null;
     }
     try {
-        const reg = await navigator.serviceWorker.register('/sw.js?v=1.1', { updateViaCache: 'none' });
-        await reg.update().catch(() => {});
+        const reg = await navigator.serviceWorker.register(`/sw.js?v=${APP_VERSION}`, { updateViaCache: 'none' });
+        reg.update().catch(() => {});
         if (reg.waiting) {
             reg.waiting.postMessage({ type: 'SKIP_WAITING' });
         }
@@ -151,6 +333,7 @@ function exposeApi() {
         isOnline,
         checkNow,
         syncNow,
+        uploadPendingToCloud,
         bootstrap,
         db,
         getMeta,
@@ -159,6 +342,9 @@ function exposeApi() {
         queueOfflineCustomer,
         queueOfflineExpense,
         queueOfflineSupplier,
+        queueOfflineSupplierBill,
+        queueOfflineSupplierPayment,
+        supplierWallet,
         getLocalSession,
         clearLocalSession,
         unlockOffline,
@@ -166,6 +352,9 @@ function exposeApi() {
         prefetchAppShells,
         logoutAndRedirect,
         redirectToLogin,
+        persistLastBranchId,
+        readLastBranchId,
+        resolveOfflineBranchId,
     };
 }
 
@@ -196,6 +385,7 @@ async function applyBranchSwitchFromPage() {
 
     try {
         await setMeta('active_branch_id', payload.id);
+        persistLastBranchId(payload.id);
         await clearPageCaches();
         if (isOnline()) {
             await bootstrap().catch(() => {});
@@ -209,16 +399,28 @@ async function applyBranchSwitchFromPage() {
 export async function bootOfflineRuntime() {
     exposeApi();
     installSessionGuards();
-    await registerServiceWorker();
-    await startConnectivityMonitor();
-    await mountOfflineBanner();
+    if (await applyHardRefreshIfNeeded()) {
+        return;
+    }
+    registerServiceWorker().catch(() => {});
+    startConnectivityMonitor().catch(() => {});
+    mountOfflineBanner().catch(() => {});
 
     if (isLoginPage()) {
-        await setupLoginForm();
+        setupLoginForm();
+        cacheLoginShell();
         return;
     }
 
+    notifyServiceWorkerLogin();
+    const pageBranch = Number(document.body?.getAttribute('data-ft-branch-id') || 0);
+    if (pageBranch) {
+        persistLastBranchId(pageBranch);
+        setMeta('active_branch_id', pageBranch).catch(() => {});
+    }
+
     await guardAuthenticatedOffline();
+    mountOfflineSupplierPanel();
     if (isOnline()) {
         probeServerSession().catch(() => {});
     }
@@ -226,10 +428,14 @@ export async function bootOfflineRuntime() {
     startSyncScheduler();
 
     if (isOnline()) {
-        maybeEnrollAfterLogin().catch(() => {});
-        if (document.body?.dataset?.ftOfflineBoot !== '0') {
-            bootstrap().catch(() => {});
-        }
+        maybeEnrollAfterLogin()
+            .then((enrolled) => {
+                if (!enrolled && document.body?.dataset?.ftOfflineBoot !== '0') {
+                    return bootstrap();
+                }
+                return null;
+            })
+            .catch(() => {});
         warmOfflineShells();
         pendingOutboxCount()
             .then((pending) => (pending > 0 ? syncNow() : null))
@@ -246,13 +452,16 @@ export async function bootOfflineRuntime() {
             window.location.replace('/login');
         }
         if (msg?.type === 'auth-required') {
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                return;
+            }
             redirectToLogin();
         }
         // branch-changed is handled by inline layout script so other tabs
         // refresh even if this Vite bundle is cached/stale.
     });
 
-    await applyBranchSwitchFromPage();
+    applyBranchSwitchFromPage().catch(() => {});
 
     // Online-only modules — Wi‑Fi badges only when offline
     function syncOnlineOnlyBadges(online = isOnline()) {

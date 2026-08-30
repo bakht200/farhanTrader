@@ -17,6 +17,7 @@ class BranchProductStock extends Model
         'selling_price',
         'retail_price',
         'wholesale_price',
+        'extra_price',
     ];
 
     protected function casts(): array
@@ -27,6 +28,7 @@ class BranchProductStock extends Model
             'selling_price' => 'decimal:2',
             'retail_price' => 'decimal:2',
             'wholesale_price' => 'decimal:2',
+            'extra_price' => 'decimal:2',
         ];
     }
 

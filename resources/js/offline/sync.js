@@ -1,8 +1,9 @@
 import { db, CACHE_VERSION, getMeta, setMeta, pendingOutboxCount } from './db';
-import { isOnline, markOfflineFromError, onConnectivityChange } from './connectivity';
+import { isOnline, checkNow, markOfflineFromError, onConnectivityChange } from './connectivity';
 import { getPendingOutbox, markOutboxAcked, markOutboxConflict } from './outbox';
 import { broadcast } from './broadcast';
 import { getLocalSession, setLocalSession } from './authVault';
+import { persistLastBranchId } from './session';
 
 const PULL_INTERVAL_MS = 5 * 60 * 1000;
 let syncing = false;
@@ -60,9 +61,14 @@ async function api(url, options = {}) {
 }
 
 async function replaceTable(table, rows) {
+    const existing = await db.table(table).toArray();
+    const keep = existing.filter((r) => String(r.id).startsWith('local-') || r.sync_status === 'pending');
     await db.table(table).clear();
     if (rows?.length) {
         await db.table(table).bulkPut(rows);
+    }
+    if (keep.length) {
+        await db.table(table).bulkPut(keep);
     }
 }
 
@@ -101,6 +107,9 @@ async function applyBranchStockOverridesToProducts(stocks) {
         if (stock.wholesale_price != null && stock.wholesale_price !== '') {
             patch.wholesale_price = stock.wholesale_price;
         }
+        if (stock.extra_price != null && stock.extra_price !== '' && Number(stock.extra_price) !== 0) {
+            patch.extra_price = stock.extra_price;
+        }
         if (stock.selling_type) {
             patch.selling_type = stock.selling_type;
         }
@@ -117,6 +126,20 @@ async function applyBranchStockOverridesToProducts(stocks) {
 }
 
 export async function hydrateFromBootstrap(data) {
+    if (!data.active_branch_id) {
+        if (data.user) {
+            await setLocalSession(data.user);
+        }
+        await setMeta('cache_version', data.cache_version || CACHE_VERSION);
+        await setMeta('user', data.user);
+        await setMeta('last_pulled_at', data.server_time || new Date().toISOString());
+        await setMeta('offline_ready', true);
+        // Admin has not picked a branch — keep the last catalog instead of
+        // treating an empty snapshot as zero stock.
+        broadcast('hydrated', { at: data.server_time, skipped_catalog: true });
+        return;
+    }
+
     await db.transaction(
         'rw',
         db.products,
@@ -133,6 +156,10 @@ export async function hydrateFromBootstrap(data) {
         db.productUnits,
         db.unitConversions,
         db.branchStocks,
+        db.productLots,
+        db.supplierBills,
+        db.supplierBillItems,
+        db.supplierTransactions,
         db.meta,
         async () => {
             await replaceTable('products', data.products || []);
@@ -149,11 +176,16 @@ export async function hydrateFromBootstrap(data) {
             await replaceTable('productUnits', data.product_units || []);
             await replaceTable('unitConversions', data.unit_conversions || []);
             await replaceTable('branchStocks', data.branch_stocks || []);
+            await replaceTable('productLots', data.product_lots || []);
+            await replaceTable('supplierBills', data.supplier_bills || []);
+            await replaceTable('supplierBillItems', data.supplier_bill_items || []);
+            await replaceTable('supplierTransactions', data.supplier_transactions || []);
             // products payload is already branch-merged from server; re-apply as safety net
             await applyBranchStockOverridesToProducts(data.branch_stocks || []);
 
             await setMeta('cache_version', data.cache_version || CACHE_VERSION);
             await setMeta('active_branch_id', data.active_branch_id);
+            persistLastBranchId(data.active_branch_id);
             await setMeta('last_pulled_at', data.server_time || new Date().toISOString());
             await setMeta('user', data.user);
             await setMeta('offline_ready', true);
@@ -208,6 +240,10 @@ export async function pull() {
     await merge('productUnits', data.product_units);
     await merge('unitConversions', data.unit_conversions);
     await merge('branchStocks', data.branch_stocks);
+    await merge('productLots', data.product_lots);
+    await merge('supplierBills', data.supplier_bills);
+    await merge('supplierBillItems', data.supplier_bill_items);
+    await merge('supplierTransactions', data.supplier_transactions);
     // Branch-only price edits update branch_stocks; keep products cache in sync
     await applyBranchStockOverridesToProducts(data.branch_stocks);
 
@@ -295,6 +331,39 @@ export async function pushOutbox() {
                         });
                     }
                 }
+                if (item.entity === 'supplier_bill' && item.server_id) {
+                    const local = await db.supplierBills.where('client_uuid').equals(item.client_uuid).first();
+                    if (local) {
+                        await db.supplierBills.delete(local.id);
+                        await db.supplierBills.put({
+                            ...local,
+                            id: item.server_id,
+                            bill_number: item.bill_number || local.bill_number,
+                            sync_status: 'synced',
+                        });
+                        const related = (await db.supplierTransactions.toArray()).filter(
+                            (t) => String(t.supplier_bill_id) === String(local.id)
+                        );
+                        for (const t of related) {
+                            await db.supplierTransactions.put({
+                                ...t,
+                                supplier_bill_id: item.server_id,
+                            });
+                        }
+                    }
+                }
+                if (item.entity === 'supplier_payment' && item.server_id) {
+                    const local = await db.supplierTransactions.where('client_uuid').equals(item.client_uuid).first();
+                    if (local) {
+                        await db.supplierTransactions.delete(local.id);
+                        await db.supplierTransactions.put({
+                            ...local,
+                            id: item.server_id,
+                            supplier_bill_id: item.supplier_bill_id || local.supplier_bill_id,
+                            sync_status: 'synced',
+                        });
+                    }
+                }
             } else if (item.status === 'conflict') {
                 conflicts.push(item);
                 await markOutboxConflict(item.client_uuid, item);
@@ -311,6 +380,33 @@ export async function pushOutbox() {
             pending: pendingLeft,
         });
     }
+}
+
+/**
+ * Shop staff tap this when they think the internet is back.
+ * Checks the line first, then pushes the local outbox to the server.
+ */
+export async function uploadPendingToCloud() {
+    const pendingBefore = await pendingOutboxCount();
+
+    if (!isOnline()) {
+        const recovered = await checkNow();
+        if (!recovered) {
+            const err = new Error(
+                pendingBefore
+                    ? `No internet yet. ${pendingBefore} change(s) stay on this PC until you upload.`
+                    : 'No internet yet. Your work is saved on this PC.'
+            );
+            err.name = 'OfflineUpload';
+            throw err;
+        }
+    }
+
+    if (pendingBefore === 0) {
+        return { pushed: 0, conflicts: [], pending: 0 };
+    }
+
+    return syncNow();
 }
 
 export async function syncNow() {

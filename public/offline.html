@@ -20,23 +20,59 @@
 <div class="wrap">
     <div class="card">
         <h1>You are offline</h1>
-        <p id="msg">This page is not available offline yet, or offline access is not set up on this device.</p>
+        <p id="msg">Checking your connection…</p>
         <p>If you have signed in on this device before, open <a href="/login">Login</a> to unlock offline mode. Cached screens you visited while online may still open.</p>
         <button type="button" id="retry">Retry connection</button>
         <p class="muted">Every shop device must connect and log in once online before relying on offline mode.</p>
     </div>
 </div>
 <script>
-    document.getElementById('retry').addEventListener('click', async () => {
+    function tellWorkerOnline() {
         try {
-            const res = await fetch('/up', { cache: 'no-store' });
-            if (res.ok) {
-                window.location.reload();
-                return;
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'CONNECTIVITY', online: true });
             }
         } catch (e) {}
-        document.getElementById('msg').textContent = 'Still offline. Check your connection and try again.';
+    }
+
+    function reopenIntendedPage() {
+        tellWorkerOnline();
+        var path = location.pathname || '/';
+        if (path === '/offline.html' || path.indexOf('/offline.html') !== -1) {
+            location.replace('/suppliers');
+            return;
+        }
+        location.replace(path);
+    }
+
+    async function tryRecover() {
+        try {
+            var res = await fetch('/up', { cache: 'no-store', credentials: 'same-origin' });
+            if (res.ok) {
+                var key = 'ftpos_offline_retry';
+                try {
+                    if (sessionStorage.getItem(key) === location.pathname) {
+                        location.replace('/suppliers');
+                        return true;
+                    }
+                    sessionStorage.setItem(key, location.pathname);
+                } catch (e2) {}
+                reopenIntendedPage();
+                return true;
+            }
+        } catch (e) {}
+        document.getElementById('msg').textContent =
+            'This page is not available offline yet. If the shop has internet, tap Retry connection.';
+        return false;
+    }
+
+    document.getElementById('retry').addEventListener('click', function () {
+        try { sessionStorage.removeItem('ftpos_offline_retry'); } catch (e) {}
+        document.getElementById('msg').textContent = 'Checking your connection…';
+        tryRecover();
     });
+
+    tryRecover();
 </script>
 </body>
 </html>

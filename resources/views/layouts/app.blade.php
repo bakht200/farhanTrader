@@ -105,6 +105,13 @@
                                     Online
                                 </button>
                                 <span id="ftpos-pending-sync" class="hidden rounded-full px-3 py-1 text-xs font-semibold"></span>
+                                <button type="button"
+                                    id="ftpos-upload-cloud"
+                                    data-ftpos-upload="1"
+                                    class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap bg-orange-500 text-white hover:bg-orange-600"
+                                    title="Send work from this PC to the cloud when you have internet">
+                                    Upload to cloud
+                                </button>
                                 @auth
                                     <x-quantity-alerts-bell />
                                     @if(Auth::user()->isAdmin())
@@ -112,12 +119,12 @@
                                             <button
                                                 @click="open = !open"
                                                 type="button"
-                                                class="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                class="inline-flex items-center gap-2 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-orange-500 {{ $currentBranch ? 'border-gray-300 text-gray-700 bg-white hover:bg-gray-50' : 'border-orange-400 text-orange-700 bg-orange-50 hover:bg-orange-100' }}"
                                             >
-                                                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <svg class="w-4 h-4 {{ $currentBranch ? 'text-gray-500' : 'text-orange-600' }}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
                                                 </svg>
-                                                <span>{{ $currentBranch?->name ?? 'Phandu' }}</span>
+                                                <span>{{ $currentBranch?->name ?? 'Select branch' }}</span>
                                                 <svg class="w-4 h-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                                     <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                                                 </svg>
@@ -196,7 +203,7 @@
                     <!-- Footer -->
                     <footer class="mt-auto py-3 sm:py-4 px-3 sm:px-4 md:px-5 border-t border-gray-200 bg-white flex-shrink-0">
                         <div class="flex flex-col md:flex-row justify-between items-center text-sm text-gray-600 gap-2">
-                            <div>2025 © FTPOS. All Right Reserved · Version {{ config('app.version', '1.1') }}</div>
+                            <div>2025 © FTPOS. All Right Reserved · Version {{ config('app.version', '2.0') }}</div>
                             <div>Design &amp; developed by <a href="https://wa.me/923330915166" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-700 font-medium underline">Bakht Biland</a></div>
                         </div>
                     </footer>
@@ -204,6 +211,7 @@
             </div>
         </div>
 
+        @include('components.branch-required-modal')
         @include('components.receipt-branding')
         @include('components.stock-alert-notify')
         @include('components.branch-switch-script')

@@ -25,7 +25,9 @@
         }
     </style>
 </head>
-<body class="font-sans antialiased bg-gray-100 overflow-hidden" data-ft-branch-id="{{ \App\Support\CurrentBranch::id() ?? '' }}">
+<body class="font-sans antialiased bg-gray-100 overflow-hidden"
+      data-ft-branch-id="{{ \App\Support\CurrentBranch::id() ?? '' }}"
+      data-ftpos-catalog="{{ ! \App\Support\CurrentBranch::id() ? 'no-branch' : (($posCards ?? $products)->isEmpty() ? 'empty' : 'ok') }}">
     <!-- Top Header Bar -->
     <div class="bg-gray-800 text-white px-6 py-3 flex items-center justify-between">
         <div class="flex items-center space-x-4">
@@ -45,6 +47,13 @@
                 Online
             </button>
             <span id="pos-pending-sync" class="hidden rounded-full px-3 py-1 text-xs font-semibold bg-amber-400 text-gray-900"></span>
+            <button type="button"
+                id="pos-upload-cloud"
+                data-ftpos-upload="1"
+                class="rounded-md px-3 py-1 text-sm font-semibold whitespace-nowrap bg-orange-500 text-white hover:bg-orange-600 border-2 border-white/20"
+                title="Send work from this PC to the cloud when you have internet">
+                Upload to cloud
+            </button>
         </div>
         <div class="flex items-center space-x-3">
                     <a href="{{ route('orders.index') }}" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-md text-sm font-medium text-white whitespace-nowrap">View Orders</a>
@@ -171,37 +180,29 @@
                 </div>
 
                 <div class="grid gap-2" id="products-grid" style="grid-template-columns: repeat(8, minmax(0, 1fr));">
-                    @foreach($products as $product)
-                    <div onclick="addToCart({{ $product->id }})" 
-                         data-product-name="{{ $product->name }}"
-                         data-product-sku="{{ $product->sku ?? '' }}"
-                         data-product-brand="{{ $product->brand ?? '' }}"
-                         data-category-id="{{ $product->category_id }}"
+                    @foreach(($posCards ?? collect()) as $card)
+                    <div onclick="addToCart({{ $card['id'] }}, {{ $card['lot_id'] ? $card['lot_id'] : 'null' }})"
+                         data-product-name="{{ $card['name'] }}"
+                         data-product-sku="{{ $card['sku'] ?? '' }}"
+                         data-product-brand="{{ $card['brand'] ?? '' }}"
+                         data-category-id="{{ $card['category_id'] }}"
                          class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
                         <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
-                            @if($product->image)
-                                <img src="{{ asset('storage/' . $product->image) }}" alt="{{ $product->name }}" class="w-full h-full object-cover">
+                            @if(!empty($card['image']))
+                                <img src="{{ $card['image'] }}" alt="{{ $card['name'] }}" class="w-full h-full object-cover">
                             @else
                                 <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
                                 </svg>
                             @endif
                         </div>
-                        <h4 class="font-semibold text-xs mb-1 line-clamp-2">{{ $product->name }}</h4>
-                        <p class="text-xs text-gray-500 mb-1">Remaining: {{ number_format($product->stock_quantity, 2) }} {{ $product->unit->short_name ?? 'Pcs' }}</p>
-                        @php
-                            $displayPrice = $product->selling_price;
-                            if ($product->selling_type === 'retail' && $product->retail_price) {
-                                $displayPrice = $product->retail_price;
-                            } elseif ($product->selling_type === 'wholesale' && $product->wholesale_price) {
-                                $displayPrice = $product->wholesale_price;
-                            } elseif ($product->selling_type === 'both' && $product->retail_price) {
-                                $displayPrice = $product->retail_price;
-                            }
-                        @endphp
-                        <p class="text-sm font-bold text-orange-600">PKR {{ number_format($displayPrice, 2) }}</p>
-                        @if($product->selling_type)
-                            <p class="text-xs text-gray-400 mt-1">{{ ucfirst($product->selling_type) }}</p>
+                        <h4 class="font-semibold text-xs mb-1 line-clamp-2">{{ $card['name'] }}</h4>
+                        <p class="text-xs text-gray-500 mb-1">Remaining: {{ number_format($card['stock_quantity'], 2) }} {{ $card['unit_name'] ?? 'Pcs' }}</p>
+                        <p class="text-sm font-bold text-orange-600">PKR {{ number_format($card['selling_price'] ?? $card['retail_price'] ?? 0, 2) }}</p>
+                        @if(!empty($card['lot_label']))
+                            <p class="text-xs text-gray-500 mt-0.5">{{ $card['lot_label'] }}</p>
+                        @elseif(!empty($card['selling_type']))
+                            <p class="text-xs text-gray-400 mt-1">{{ ucfirst($card['selling_type']) }}</p>
                         @endif
                     </div>
                     @endforeach
@@ -383,31 +384,7 @@
     <!-- Products Data for JavaScript -->
     <script>
         @php
-            $productsData = $products->map(function($p) {
-                // Get base unit
-                $baseUnit = $p->base_unit_id ?? $p->unit_id;
-                $baseUnitName = $p->baseUnit ? $p->baseUnit->short_name : ($p->unit ? $p->unit->short_name : '');
-                // Branch overrides applied (base unit + scaled multi-unit prices)
-                $sellingUnits = $p->sellingUnitsForPos();
-                
-                return [
-                    'id' => $p->id,
-                    'name' => $p->name,
-                    'sku' => $p->sku,
-                    'brand' => $p->brand ?? '',
-                    'purchase_price' => $p->purchase_price,
-                    'selling_price' => $p->selling_price,
-                    'retail_price' => $p->retail_price ?? $p->selling_price,
-                    'wholesale_price' => $p->wholesale_price ?? $p->selling_price,
-                    'selling_type' => $p->selling_type ?? 'retail',
-                    'stock_quantity' => $p->stock_quantity,
-                    'unit_id' => $baseUnit,
-                    'unit_name' => $baseUnitName,
-                    'base_unit_id' => $baseUnit,
-                    'selling_units' => $sellingUnits, // Array of units with branch-aware prices
-                    'image' => $p->image ? asset('storage/' . $p->image) : null,
-                ];
-            })->values();
+            $productsData = isset($posCards) ? $posCards->values() : collect();
         @endphp
         @php
             $customersData = $customers->map(function($c) {
@@ -421,15 +398,24 @@
                     'previous_balance' => $c->unpaid_amount ?? 0,
                 ];
             })->values();
+            $categoriesData = $categories->map(function ($c) {
+                return [
+                    'id' => $c->id,
+                    'name' => $c->name,
+                    'products_count' => $c->products_count ?? 0,
+                ];
+            })->values();
         @endphp
         const products = @json($productsData);
         const units = @json($units);
         const customersData = @json($customersData);
+        const categoriesData = @json($categoriesData);
         const editOrder = @json($editOrderData ?? null);
         const editOrderId = @json($editOrderId ?? null);
         let cart = [];
         let paymentMethod = 'cash';
         let allCustomers = customersData;
+        let allCategories = categoriesData.slice();
         let customerTypeFilter = 'all';
         let orderId = editOrderId || 0;
         let customerPreviousBalance = 0;
@@ -438,42 +424,258 @@
         let editingCustomProductIndex = null; // Track which custom product is being edited
         const conversionFactorCache = {};
 
-        async function hydratePosFromOfflineCache() {
-            if (!window.FTOffline || (window.FTOffline.isOnline && window.FTOffline.isOnline())) {
+        function escapePosHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }[ch]));
+        }
+
+        function posDisplayPrice(product) {
+            if (product.selling_type === 'retail' && product.retail_price) return product.retail_price;
+            if (product.selling_type === 'wholesale' && product.wholesale_price) return product.wholesale_price;
+            if (product.selling_type === 'both' && product.retail_price) return product.retail_price;
+            return product.selling_price;
+        }
+
+        function applyLotToCachedProduct(p, lot) {
+            const lotSelling = Number(lot.retail_price || lot.selling_price || lot.purchase_price || 0);
+            const type = lot.selling_type || p.selling_type || 'both';
+            let display = lotSelling;
+            if (type === 'wholesale' && Number(lot.wholesale_price) > 0) {
+                display = Number(lot.wholesale_price);
+            } else if (Number(lot.retail_price) > 0) {
+                display = Number(lot.retail_price);
+            }
+            return {
+                ...p,
+                lot_id: lot.id,
+                lot_label: 'Rate PKR ' + Number(lot.purchase_price || 0).toFixed(2),
+                purchase_price: Number(lot.purchase_price || 0),
+                extra_price: Number(lot.extra_price || 0),
+                retail_price: Number(lot.retail_price || 0),
+                wholesale_price: Number(lot.wholesale_price || 0),
+                selling_price: display,
+                selling_type: type,
+                stock_quantity: Number(lot.quantity || 0),
+            };
+        }
+
+        function expandCachedProductsToPosCards(cachedProducts, lots) {
+            const lotsByProduct = new Map();
+            (lots || []).forEach((lot) => {
+                const pid = Number(lot.product_id);
+                if (!lotsByProduct.has(pid)) {
+                    lotsByProduct.set(pid, []);
+                }
+                lotsByProduct.get(pid).push(lot);
+            });
+            const cards = [];
+            (cachedProducts || []).forEach((p) => {
+                if (!p || p.is_active === false || p.is_active === 0) {
+                    return;
+                }
+                const productLots = lotsByProduct.get(Number(p.id)) || [];
+                if (productLots.length) {
+                    productLots.forEach((lot) => {
+                        cards.push(mapCachedPosProduct(applyLotToCachedProduct(p, lot)));
+                    });
+                } else {
+                    cards.push(mapCachedPosProduct(p));
+                }
+            });
+            return cards;
+        }
+
+        function mapCachedPosProduct(p) {
+            return {
+                id: p.id,
+                name: p.name,
+                sku: p.sku,
+                category_id: p.category_id,
+                brand: p.brand || '',
+                purchase_price: p.purchase_price,
+                selling_price: p.selling_price,
+                retail_price: p.retail_price ?? p.selling_price,
+                wholesale_price: p.wholesale_price ?? p.selling_price,
+                extra_price: p.extra_price || 0,
+                selling_type: p.selling_type || 'retail',
+                stock_quantity: p.stock_quantity,
+                unit_id: p.base_unit_id || p.unit_id,
+                unit_name: p.unit_name || (p.unit && p.unit.short_name) || 'Pcs',
+                base_unit_id: p.base_unit_id || p.unit_id,
+                selling_units: p.selling_units || [],
+                image: p.image || null,
+                lot_id: p.lot_id || null,
+                lot_label: p.lot_label || null,
+            };
+        }
+
+        function rebuildProductGrid() {
+            const productsGrid = document.getElementById('products-grid');
+            if (!productsGrid) return;
+
+            productsGrid.innerHTML = products.map((product) => {
+                const price = Number(posDisplayPrice(product) || 0);
+                const qty = Number(product.stock_quantity || 0);
+                const img = product.image
+                    ? `<img src="${escapePosHtml(product.image)}" alt="${escapePosHtml(product.name)}" class="w-full h-full object-cover">`
+                    : `<svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path></svg>`;
+                const sellingType = product.selling_type
+                    ? `<p class="text-xs text-gray-400 mt-1">${escapePosHtml(String(product.selling_type).charAt(0).toUpperCase() + String(product.selling_type).slice(1))}</p>`
+                    : '';
+                const lotLabel = product.lot_label
+                    ? `<p class="text-xs text-gray-500 mt-0.5">${escapePosHtml(product.lot_label)}</p>`
+                    : sellingType;
+                return `<div onclick="addToCart(${Number(product.id)}, ${product.lot_id ? Number(product.lot_id) : 'null'})"
+                         data-product-name="${escapePosHtml(product.name)}"
+                         data-product-sku="${escapePosHtml(product.sku || '')}"
+                         data-product-brand="${escapePosHtml(product.brand || '')}"
+                         data-category-id="${escapePosHtml(product.category_id || '')}"
+                         class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
+                        <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">${img}</div>
+                        <h4 class="font-semibold text-xs mb-1 line-clamp-2">${escapePosHtml(product.name)}</h4>
+                        <p class="text-xs text-gray-500 mb-1">Remaining: ${qty.toFixed(2)} ${escapePosHtml(product.unit_name || 'Pcs')}</p>
+                        <p class="text-sm font-bold text-orange-600">PKR ${price.toFixed(2)}</p>
+                        ${lotLabel}
+                    </div>`;
+            }).join('');
+
+            if (typeof filterCategory === 'function') {
+                filterCategory(currentCategoryId);
+            }
+        }
+
+        function rebuildCategoryButtons(list) {
+            const row = document.getElementById('category-buttons');
+            if (!row || !list || !list.length) return;
+
+            const counts = {};
+            products.forEach((p) => {
+                const id = String(p.category_id || '');
+                counts[id] = (counts[id] || 0) + 1;
+            });
+            const total = products.length;
+            const selected = String(currentCategoryId || 'all');
+
+            row.innerHTML = '';
+            const allBtn = document.createElement('button');
+            allBtn.id = 'category-btn-all';
+            allBtn.className = selected === 'all'
+                ? 'flex items-center space-x-2 px-4 py-2 rounded-md whitespace-nowrap bg-orange-500 text-white'
+                : 'flex items-center space-x-2 px-4 py-2 rounded-md whitespace-nowrap bg-gray-100 text-gray-700 hover:bg-gray-200';
+            allBtn.innerHTML = `<span>All Categories</span><span class="text-xs">(${total} Items)</span>`;
+            allBtn.onclick = () => filterCategory('all');
+            row.appendChild(allBtn);
+
+            list.forEach((category) => {
+                const btn = document.createElement('button');
+                btn.id = `category-btn-${category.id}`;
+                const isActive = selected === String(category.id);
+                btn.className = isActive
+                    ? 'flex items-center space-x-2 px-4 py-2 rounded-md whitespace-nowrap bg-orange-500 text-white'
+                    : 'flex items-center space-x-2 px-4 py-2 rounded-md whitespace-nowrap bg-gray-100 text-gray-700 hover:bg-gray-200';
+                const count = counts[String(category.id)] || Number(category.products_count) || 0;
+                btn.innerHTML = `<span>${escapePosHtml(category.name)}</span><span class="text-xs">(${count} Items)</span>`;
+                btn.onclick = () => filterCategory(category.id);
+                row.appendChild(btn);
+            });
+        }
+
+        function applyCachedCustomers(cachedCustomers) {
+            allCustomers = cachedCustomers
+                .filter((c) => c && c.is_active !== false && c.is_active !== 0)
+                .map((c) => ({
+                    id: c.id,
+                    name: c.name,
+                    customer_id: c.customer_id || ('CN-' + String(c.id).padStart(3, '0')),
+                    customer_type: c.customer_type || '',
+                    phone: c.phone || '',
+                    email: c.email || '',
+                    previous_balance: c.unpaid_amount || c.previous_balance || 0,
+                }));
+            allCustomers.forEach((c) => {
+                if (typeof appendCustomerTypeChipIfNeeded === 'function') {
+                    appendCustomerTypeChipIfNeeded(c.customer_type);
+                }
+            });
+            if (typeof filterCustomers === 'function') {
+                filterCustomers();
+            }
+        }
+
+        async function waitForFtOffline(ms = 10000) {
+            const started = Date.now();
+            while (!(window.FTOffline && window.FTOffline.db)) {
+                if (Date.now() - started > ms) return false;
+                await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return true;
+        }
+
+        function posCatalogDomEmpty() {
+            return !document.querySelector('#products-grid [data-product-name]');
+        }
+
+        async function hydratePosFromOfflineCache(opts = {}) {
+            const force = !!opts.force;
+            if (!(await waitForFtOffline())) {
+                return;
+            }
+            const online = window.FTOffline.isOnline ? window.FTOffline.isOnline() : navigator.onLine;
+            const htmlEmpty = products.length === 0 || allCustomers.length === 0 || posCatalogDomEmpty();
+            if (online && !htmlEmpty && !force) {
                 return;
             }
             try {
-                const cachedProducts = await window.FTOffline.db.products.toArray();
-                if (cachedProducts.length) {
-                    products.splice(0, products.length, ...cachedProducts.map((p) => ({
-                        id: p.id,
-                        name: p.name,
-                        sku: p.sku,
-                        brand: p.brand || '',
-                        purchase_price: p.purchase_price,
-                        selling_price: p.selling_price,
-                        retail_price: p.retail_price ?? p.selling_price,
-                        wholesale_price: p.wholesale_price ?? p.selling_price,
-                        selling_type: p.selling_type || 'retail',
-                        stock_quantity: p.stock_quantity,
-                        unit_id: p.base_unit_id || p.unit_id,
-                        unit_name: p.unit_name || 'Pcs',
-                        base_unit_id: p.base_unit_id || p.unit_id,
-                        selling_units: p.selling_units || [],
-                        image: p.image || null,
-                    })));
+                let branchId = Number(document.body.getAttribute('data-ft-branch-id') || 0)
+                    || (window.FTOffline.readLastBranchId && window.FTOffline.readLastBranchId())
+                    || 0;
+                if (!branchId && window.FTOffline.resolveOfflineBranchId) {
+                    branchId = Number(await window.FTOffline.resolveOfflineBranchId()) || 0;
                 }
-                const cachedCustomers = await window.FTOffline.db.customers.toArray();
-                if (cachedCustomers.length) {
-                    allCustomers = cachedCustomers.map((c) => ({
+                const [cachedProducts, cachedCustomers, cachedCategories, cachedLots] = await Promise.all([
+                    window.FTOffline.db.products.toArray(),
+                    window.FTOffline.db.customers.toArray(),
+                    window.FTOffline.db.categories.toArray(),
+                    window.FTOffline.db.productLots ? window.FTOffline.db.productLots.toArray() : Promise.resolve([]),
+                ]);
+                const lotsForBranch = (cachedLots || []).filter((lot) => {
+                    if (!branchId || !lot.branch_id) {
+                        return true;
+                    }
+                    return Number(lot.branch_id) === branchId;
+                });
+                if (!branchId && !cachedProducts.length) {
+                    const grid = document.getElementById('products-grid');
+                    if (grid && !grid.querySelector('[data-product-name]')) {
+                        grid.innerHTML = '<p class="col-span-full text-sm text-gray-500 p-4">Pick a branch while online before using POS offline.</p>';
+                    }
+                    document.body.setAttribute('data-ftpos-catalog', 'no-branch');
+                } else if (cachedProducts.length && (products.length === 0 || force || posCatalogDomEmpty())) {
+                    products.splice(0, products.length, ...expandCachedProductsToPosCards(cachedProducts, lotsForBranch));
+                    rebuildProductGrid();
+                    document.body.setAttribute('data-ftpos-catalog', products.length ? 'ok' : 'empty');
+                    if (!products.length && !branchId) {
+                        const grid = document.getElementById('products-grid');
+                        if (grid && !grid.querySelector('[data-product-name]')) {
+                            grid.innerHTML = '<p class="col-span-full text-sm text-gray-500 p-4">Pick a branch while online before using POS offline.</p>';
+                        }
+                    }
+                }
+                if (cachedCustomers.length && (allCustomers.length === 0 || force || htmlEmpty)) {
+                    applyCachedCustomers(cachedCustomers);
+                }
+                if (cachedCategories.length) {
+                    allCategories = cachedCategories.map((c) => ({
                         id: c.id,
                         name: c.name,
-                        customer_id: c.customer_id || ('CN-' + String(c.id).padStart(3, '0')),
-                        customer_type: c.customer_type || '',
-                        phone: c.phone || '',
-                        email: c.email || '',
-                        previous_balance: c.unpaid_amount || 0,
+                        products_count: c.products_count || 0,
                     }));
+                    rebuildCategoryButtons(allCategories);
                 }
             } catch (e) {
                 console.warn('Offline POS hydrate failed', e);
@@ -481,8 +683,20 @@
         }
         hydratePosFromOfflineCache();
         window.addEventListener('ftpos-connectivity', (e) => {
-            if (e.detail?.status === 'offline') {
+            if (e.detail?.status === 'offline' || posCatalogDomEmpty() || allCustomers.length === 0) {
                 hydratePosFromOfflineCache();
+            }
+        });
+        window.addEventListener('ftpos-offline', (e) => {
+            if (e.detail?.type === 'hydrated') {
+                const online = window.FTOffline && window.FTOffline.isOnline
+                    ? window.FTOffline.isOnline()
+                    : navigator.onLine;
+                // Server HTML already has lot cards while online.
+                // Never replace them with the IndexedDB catalog until we are offline.
+                if (! online) {
+                    hydratePosFromOfflineCache({ force: true });
+                }
             }
         });
 
@@ -492,6 +706,26 @@
 
         function getItemBaseUnitId(item) {
             return Number(item?.base_unit_id ?? item?.unit_id) || null;
+        }
+
+        function clonePosValue(value) {
+            if (value == null) return value;
+            try {
+                return JSON.parse(JSON.stringify(value));
+            } catch (e) {
+                return value;
+            }
+        }
+
+        function findPosProduct(productId, lotId) {
+            const pid = Number(productId);
+            const lid = Number(lotId || 0);
+            if (lid) {
+                return products.find((p) => Number(p.id) === pid && Number(p.lot_id || 0) === lid) || null;
+            }
+            return products.find((p) => Number(p.id) === pid && !p.lot_id)
+                || products.find((p) => Number(p.id) === pid)
+                || null;
         }
 
         function localConversionFactor(productId, fromUnitId, toUnitId) {
@@ -756,7 +990,7 @@
                             e.preventDefault();
                             e.stopPropagation();
                         }
-                        addToCart(product.id);
+                        addToCart(product.id, product.lot_id || null);
                         document.getElementById('right-product-search').value = '';
                         hideProductSuggestions();
                         // Visual feedback
@@ -992,10 +1226,11 @@
         }
 
         // Add to cart
-        async function addToCart(productId) {
+        async function addToCart(productId, lotId) {
             // Convert productId to number for comparison (handle both string and number)
             const productIdNum = typeof productId === 'string' ? parseInt(productId, 10) : Number(productId);
-            const product = products.find(p => Number(p.id) === productIdNum);
+            const lotIdNum = lotId == null || lotId === '' ? null : Number(lotId);
+            const product = findPosProduct(productIdNum, lotIdNum);
             if (!product) {
                 console.error('Product not found:', productId, 'Type:', typeof productId, 'Converted:', productIdNum);
                 console.error('Available products:', products.map(p => ({ id: p.id, name: p.name, idType: typeof p.id })));
@@ -1026,7 +1261,7 @@
                 initialPrice = product.retail_price; // Default to retail for "both"
             }
 
-            const existingItem = cart.find(item => Number(item.product_id) === productIdNum);
+            const existingItem = cart.find(item => Number(item.product_id) === productIdNum && Number(item.lot_id || 0) === Number(lotIdNum || 0));
             if (existingItem) {
                 const newQuantity = parseFloat((existingItem.quantity + 1).toFixed(2));
                 const validation = await isQuantityWithinStock(existingItem, newQuantity);
@@ -1040,6 +1275,9 @@
                     }
                 }
                 existingItem.quantity = newQuantity;
+                if (!(parseFloat(existingItem.extra_price) > 0)) {
+                    existingItem.extra_price = parseFloat(product.extra_price) || 0;
+                }
             } else {
                 // Get default unit (base unit or first selling unit)
                 const defaultUnit = product.selling_units && product.selling_units.length > 0
@@ -1050,8 +1288,12 @@
                 
                 cart.push({
                     product_id: productIdNum, // Use the normalized ID
+                    lot_id: (lotIdNum != null && lotIdNum > 0) ? lotIdNum : (product.lot_id || null),
+                    lot_label: product.lot_label || null,
                     name: product.name,
                     purchase_price: parseFloat(product.purchase_price) || 0,
+                    lot_purchase_price: parseFloat(product.purchase_price) || 0,
+                    extra_price: parseFloat(product.extra_price) || 0,
                     selling_price: cartPrice,
                     retail_price: parseFloat(product.retail_price || product.selling_price) || 0,
                     wholesale_price: parseFloat(product.wholesale_price || product.selling_price) || 0,
@@ -1061,7 +1303,7 @@
                     unit_id: defaultUnit.unit_id || product.unit_id,
                     unit_name: defaultUnit.unit_name || defaultUnit.unit_short_name || product.unit_name,
                     base_unit_id: product.base_unit_id || product.unit_id,
-                    selling_units: product.selling_units || [], // Store configured units
+                    selling_units: clonePosValue(product.selling_units || []),
                     stock_quantity: parseFloat(product.stock_quantity) || 0,
                     discount_type: 'percentage',
                     discount: 0,
@@ -1138,12 +1380,10 @@
             if (!item || item.product_id === null || item.is_custom === true) {
                 return;
             }
-            const product = products.find(p => Number(p.id) === Number(item.product_id));
-            if (!product) {
-                return;
-            }
-            const baseId = getProductCostBaseUnitId(product);
-            const raw = parseFloat(product.purchase_price) || 0;
+            const product = findPosProduct(item.product_id, item.lot_id);
+            const costSource = product || item;
+            const baseId = getProductCostBaseUnitId(costSource);
+            const raw = parseFloat(item.lot_purchase_price ?? product?.purchase_price ?? item.purchase_price) || 0;
             const lineUnit = Number(item.unit_id);
             item.skip_sell_vs_purchase_warning = false;
 
@@ -1158,7 +1398,7 @@
 
             const convHeaders = { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
             async function fetchFactor(fromId, toId) {
-                return getConversionFactor(product.id, fromId, toId);
+                return getConversionFactor(item.product_id, fromId, toId);
             }
 
             try {
@@ -1181,8 +1421,9 @@
                 console.warn('Purchase cost: base→line conversion failed', e);
             }
 
-            const suBase = (product.selling_units || []).find(u => Number(u.unit_id) === baseId);
-            const suLine = (product.selling_units || []).find(u => Number(u.unit_id) === lineUnit);
+            const sellingUnits = product?.selling_units || item.selling_units || [];
+            const suBase = sellingUnits.find(u => Number(u.unit_id) === baseId);
+            const suLine = sellingUnits.find(u => Number(u.unit_id) === lineUnit);
             const pBase = parseFloat(suBase && suBase.selling_price) || 0;
             const pLineCfg = parseFloat(suLine && suLine.selling_price) || 0;
             if (pBase > 0 && pLineCfg > 0) {
@@ -1238,74 +1479,37 @@
                 return;
             }
             
-            // Find product
-            const product = products.find(p => p.id == item.product_id);
+            const product = findPosProduct(item.product_id, item.lot_id);
             if (!product) {
                 console.error('Product not found for unit update');
                 return;
             }
-            
-            // Update unit_id
-            item.unit_id = newUnitId;
-            
-            // Find unit configuration in selling_units
-            const unitConfig = product.selling_units && product.selling_units.length > 0
-                ? product.selling_units.find(u => u.unit_id == newUnitId)
-                : null;
-            
-            if (unitConfig) {
-                // Update unit name
-                item.unit_name = unitConfig.unit_name || unitConfig.unit_short_name || '';
-                
-                // Branch product rates (for base unit) — prefer over shared unit table
-                let branchBasePrice = parseFloat(product.selling_price) || 0;
-                if (product.selling_type === 'retail' && product.retail_price) {
-                    branchBasePrice = parseFloat(product.retail_price) || branchBasePrice;
-                } else if (product.selling_type === 'wholesale' && product.wholesale_price) {
-                    branchBasePrice = parseFloat(product.wholesale_price) || branchBasePrice;
-                } else if (product.selling_type === 'both' && product.retail_price) {
-                    branchBasePrice = parseFloat(product.retail_price) || branchBasePrice;
-                }
 
-                // Update price
-                if (unitConfig.is_base_unit && branchBasePrice > 0) {
-                    item.selling_price = branchBasePrice;
-                } else if (unitConfig.selling_price && unitConfig.selling_price > 0) {
-                    // Use branch-scaled unit price from selling_units
-                    item.selling_price = parseFloat(unitConfig.selling_price);
-                } else {
-                    // Calculate from base unit using conversion factor
-                    const baseUnit = product.selling_units.find(u => u.is_base_unit);
-                    const basePrice = branchBasePrice || (baseUnit ? parseFloat(baseUnit.selling_price) : 0);
-                    if (baseUnit && baseUnit.unit_id != newUnitId && basePrice) {
-                        try {
-                            const factor = await getConversionFactor(product.id, baseUnit.unit_id, newUnitId);
-                            if (factor) {
-                                // 1 base unit = `factor` of the selected unit, so unit price = base ÷ factor
-                                item.selling_price = parseFloat(basePrice) / parseFloat(factor);
-                            } else {
-                                console.warn('Conversion factor not found, using base unit price');
-                                item.selling_price = parseFloat(basePrice);
-                            }
-                        } catch (e) {
-                            console.error('Error fetching conversion factor:', e);
-                            // Fallback to base unit price
-                            if (basePrice) {
-                                item.selling_price = parseFloat(basePrice);
-                            }
-                        }
-                    } else if (basePrice) {
-                        // Same unit as base, use base price
-                        item.selling_price = parseFloat(basePrice);
-                    }
-                }
+            const oldUnitId = Number(item.unit_id);
+            const previousSelling = parseFloat(item.selling_price) || 0;
+            item.unit_id = newUnitId;
+
+            const sellingUnits = (item.selling_units && item.selling_units.length > 0)
+                ? item.selling_units
+                : (product.selling_units || []);
+            const unitConfig = sellingUnits.find(u => u.unit_id == newUnitId) || null;
+
+            if (unitConfig) {
+                item.unit_name = unitConfig.unit_name || unitConfig.unit_short_name || '';
             } else {
-                // No unit config found, try to find unit in global units list
                 const selectedUnit = units.find(u => u.id == newUnitId);
                 if (selectedUnit) {
                     item.unit_name = selectedUnit.short_name;
                 }
-                // Keep existing price (no conversion available)
+            }
+
+            // Keep this line's selling price; only scale it for the new unit.
+            // Do not copy another lot's catalog rate onto this row.
+            if (oldUnitId && Number(newUnitId) && oldUnitId !== Number(newUnitId) && previousSelling > 0) {
+                const factor = await getConversionFactor(item.product_id, oldUnitId, newUnitId);
+                if (factor != null && factor > 0) {
+                    item.selling_price = parseFloat((previousSelling / factor).toFixed(2));
+                }
             }
 
             await refreshLinePurchasePrice(index);
@@ -1397,6 +1601,17 @@
                 const quantity = parseFloat(item.quantity) || 0;
                 const sellingPrice = parseFloat(item.selling_price) || 0;
                 const purchasePrice = parseFloat(item.purchase_price) || 0;
+                const isCustom = item.product_id === null || item.is_custom === true;
+                const catalogProduct = !isCustom
+                    ? findPosProduct(item.product_id, item.lot_id)
+                    : null;
+                const extraPrice = parseFloat(item.extra_price) || parseFloat(catalogProduct?.extra_price) || 0;
+                if (catalogProduct && catalogProduct.stock_quantity != null) {
+                    item.stock_quantity = parseFloat(catalogProduct.stock_quantity) || 0;
+                }
+                if (catalogProduct && item.lot_purchase_price == null) {
+                    item.lot_purchase_price = parseFloat(catalogProduct.purchase_price) || 0;
+                }
                 
                 let itemTotal = quantity * sellingPrice;
                 let discount = 0;
@@ -1412,7 +1627,6 @@
                 const selectedUnit = units.find(u => u.id == item.unit_id);
                 const unitName = selectedUnit ? selectedUnit.short_name : 'Pcs';
 
-                const isCustom = item.product_id === null || item.is_custom === true;
                 let maxSelectedQty = 0;
                 let remainingSelectedQty = 0;
                 let stockDisplay = '<div class="text-xs text-blue-500">Custom Product</div>';
@@ -1423,7 +1637,13 @@
                         <div class="text-xs text-gray-500">In Stock: ${parseFloat(maxSelectedQty || 0).toFixed(2)} ${unitName}</div>
                     `;
                 }
-                const purchasePriceDisplay = isCustom ? '<div class="text-sm text-gray-400">-</div>' : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(purchasePrice) : '****'}</div>`;
+                const extraPriceDisplay = extraPrice > 0
+                    ? `<div class="text-xs text-gray-400 mt-0.5">${formatCurrency(extraPrice)}</div>`
+                    : '';
+                const displayedPurchase = purchasePrice + extraPrice;
+                const purchasePriceDisplay = isCustom
+                    ? '<div class="text-sm text-gray-400">-</div>'
+                    : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(displayedPurchase) : '****'}</div>${extraPriceDisplay}`;
                 const remainingStockDisplay = isCustom
                     ? '<div class="text-xs text-blue-500">Custom</div>'
                     : `<div class="text-sm font-medium text-amber-600">${parseFloat(remainingSelectedQty || 0).toFixed(2)} ${unitName}</div>`;
@@ -1436,6 +1656,7 @@
                         <td class="px-4 py-3 whitespace-nowrap">
                             <div>
                                 <div class="font-semibold text-gray-900">${item.name}</div>
+                                ${item.lot_label ? `<div class="text-xs text-gray-500">${item.lot_label}</div>` : ''}
                                 ${stockDisplay}
                         </div>
                         </td>
@@ -1886,6 +2107,9 @@
                 } else {
                     // Regular product - send product_id
                     formData.append(`items[${index}][product_id]`, item.product_id);
+                    if (item.lot_id) {
+                        formData.append(`items[${index}][product_lot_id]`, item.lot_id);
+                    }
                 }
                 formData.append(`items[${index}][quantity]`, item.quantity);
                 formData.append(`items[${index}][unit_id]`, item.unit_id || '');
@@ -1924,6 +2148,8 @@
                                 selling_price: item.selling_price,
                                 discount_type: item.discount_type,
                                 discount: item.discount,
+                                product_lot_id: isCustom ? null : (item.lot_id || item.product_lot_id || null),
+                                lot_id: isCustom ? null : (item.lot_id || item.product_lot_id || null),
                             };
                         }),
                     };
@@ -2805,7 +3031,8 @@
                         addedCount++;
                     } else {
                         // Regular product - check if product exists in products list
-                        const product = products.find(p => Number(p.id) === Number(item.product_id));
+                        const lotId = item.product_lot_id || item.lot_id || null;
+                        const product = findPosProduct(item.product_id, lotId);
                         
                         if (!product) {
                             skippedCount++;
@@ -2822,8 +3049,9 @@
                         
                         // Check if item already exists in cart
                         const existingItem = cart.find(cartItem => 
-                            cartItem.product_id === product.id && 
-                            cartItem.unit_id === item.unit_id
+                            Number(cartItem.product_id) === Number(product.id) && 
+                            Number(cartItem.lot_id || 0) === Number(product.lot_id || lotId || 0) &&
+                            Number(cartItem.unit_id) === Number(item.unit_id)
                         );
                         
                         if (existingItem) {
@@ -2841,18 +3069,22 @@
                             // Add new item to cart
                             cart.push({
                                 product_id: Number(item.product_id),
+                                lot_id: product.lot_id || lotId || null,
+                                lot_label: product.lot_label || null,
                                 name: item.name,
-                                purchase_price: parseFloat(item.purchase_price) || 0,
-                                selling_price: parseFloat(item.selling_price) || 0,
-                                retail_price: parseFloat(item.retail_price) || 0,
-                                wholesale_price: parseFloat(item.wholesale_price) || 0,
+                                purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                lot_purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
+                                selling_price: parseFloat(item.selling_price || product.retail_price) || 0,
+                                retail_price: parseFloat(product.retail_price || item.retail_price) || 0,
+                                wholesale_price: parseFloat(product.wholesale_price || item.wholesale_price) || 0,
                                 selling_type: item.selling_type || product.selling_type || 'retail',
                                 price_type: item.price_type || (product.selling_type === 'both' ? 'retail' : product.selling_type) || 'retail',
                                 quantity: parseFloat(item.quantity) || 1,
                                 unit_id: item.unit_id || product.unit_id,
                                 unit_name: item.unit_name || product.unit_name || 'Pcs',
                                 base_unit_id: item.base_unit_id || product.base_unit_id || product.unit_id,
-                                selling_units: product.selling_units || [],
+                                selling_units: clonePosValue(product.selling_units || []),
                                 stock_quantity: parseFloat(product.stock_quantity) || 0,
                                 discount_type: item.discount_type || 'percentage',
                                 discount: parseFloat(item.discount) || 0,
@@ -3069,6 +3301,7 @@
                     name: data.product.name,
                     sku: data.product.sku,
                     purchase_price: parseFloat(data.product.purchase_price),
+                    extra_price: parseFloat(data.product.extra_price) || 0,
                     selling_price: parseFloat(data.product.selling_price || 0),
                     retail_price: parseFloat(data.product.retail_price || data.product.selling_price || 0),
                     wholesale_price: parseFloat(data.product.wholesale_price || data.product.selling_price || 0),
@@ -3112,7 +3345,7 @@
 
             // Create product card element
             const productCard = document.createElement('div');
-            productCard.onclick = () => addToCart(product.id);
+            productCard.onclick = () => addToCart(product.id, product.lot_id || null);
             productCard.setAttribute('data-product-name', product.name);
             productCard.setAttribute('data-product-sku', product.sku || '');
             productCard.setAttribute('data-category-id', product.category_id || '');
@@ -3221,6 +3454,9 @@
                 } else {
                     // Regular product - send product_id
                     formData.append(`items[${index}][product_id]`, item.product_id);
+                    if (item.lot_id) {
+                        formData.append(`items[${index}][product_lot_id]`, item.lot_id);
+                    }
                 }
                 formData.append(`items[${index}][quantity]`, item.quantity);
                 formData.append(`items[${index}][unit_id]`, item.unit_id);
@@ -4107,8 +4343,9 @@
 
                     // For regular products, find the product in the products array to get full details
                     let product = null;
+                    const lotId = item.product_lot_id || item.lot_id || null;
                     if (!isCustom) {
-                        product = products.find(p => Number(p.id) === Number(item.product_id));
+                        product = findPosProduct(item.product_id, lotId);
                     }
 
                     // Calculate discount value
@@ -4139,9 +4376,13 @@
                     } else {
                         cart.push({
                             product_id: Number(item.product_id),
+                            lot_id: product.lot_id || lotId || null,
+                            lot_label: product.lot_label || null,
                             name: product.name,
                             purchase_price: parseFloat(product.purchase_price) || 0,
-                            selling_price: parseFloat(item.unit_price || item.selling_price) || 0,
+                            lot_purchase_price: parseFloat(product.purchase_price) || 0,
+                            extra_price: parseFloat(product.extra_price) || 0,
+                            selling_price: parseFloat(item.unit_price || item.selling_price || product.retail_price) || 0,
                             retail_price: parseFloat(product.retail_price || product.selling_price) || 0,
                             wholesale_price: parseFloat(product.wholesale_price || product.selling_price) || 0,
                             selling_type: product.selling_type || 'retail',
@@ -4150,7 +4391,7 @@
                             unit_id: item.unit_id || product.unit_id,
                             unit_name: item.unit_name || product.unit_name,
                             base_unit_id: product.base_unit_id || product.unit_id,
-                            selling_units: product.selling_units || [],
+                            selling_units: clonePosValue(product.selling_units || []),
                             stock_quantity: parseFloat(product.stock_quantity) || 0,
                             discount_type: 'fixed',
                             discount: discountValue,
@@ -4325,7 +4566,8 @@
                         // For regular products, find the product in the products array to get full details
                         let product = null;
                         if (!isCustom) {
-                            product = products.find(p => Number(p.id) === Number(item.product_id));
+                            const lotId = item.product_lot_id || item.lot_id || null;
+                            product = findPosProduct(item.product_id, lotId);
                             
                             if (!product) {
                                 console.warn('Product not found for held order item:', item.product_id);
@@ -4367,19 +4609,23 @@
                         } else {
                             cart.push({
                                 product_id: Number(item.product_id),
+                                lot_id: product.lot_id || item.product_lot_id || item.lot_id || null,
+                                lot_label: product.lot_label || item.lot_label || null,
                                 name: item.name,
-                                purchase_price: parseFloat(item.purchase_price) || 0,
+                                purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                lot_purchase_price: parseFloat(product.purchase_price || item.purchase_price) || 0,
+                                extra_price: parseFloat(product.extra_price || item.extra_price) || 0,
                                 selling_price: parseFloat(item.selling_price) || 0,
-                                retail_price: parseFloat(item.retail_price) || 0,
-                                wholesale_price: parseFloat(item.wholesale_price) || 0,
+                                retail_price: parseFloat(item.retail_price || product.retail_price) || 0,
+                                wholesale_price: parseFloat(item.wholesale_price || product.wholesale_price) || 0,
                                 selling_type: item.selling_type || 'retail',
                                 price_type: item.price_type || (item.selling_type === 'both' ? 'retail' : item.selling_type),
                                 quantity: parseFloat(item.quantity) || 0,
                                 unit_id: item.unit_id || product.unit_id,
                                 unit_name: item.unit_name || product.unit_name,
                                 base_unit_id: product.base_unit_id || product.unit_id,
-                                selling_units: product.selling_units || [],
-                                stock_quantity: parseFloat(item.stock_quantity) || 0,
+                                selling_units: clonePosValue(item.selling_units || product.selling_units || []),
+                                stock_quantity: parseFloat(product.stock_quantity || item.stock_quantity) || 0,
                                 discount_type: item.discount_type || 'percentage',
                                 discount: discountValue,
                             });

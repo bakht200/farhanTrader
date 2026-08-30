@@ -1,6 +1,14 @@
 import { db, uuid, pendingOutboxCount } from './db';
 import { broadcast } from './broadcast';
 import { getLocalSession } from './authVault';
+import { readLastBranchId } from './session';
+
+async function offlineBranchId(explicit = null) {
+    const n = Number(explicit || 0)
+        || Number((await db.meta.get('active_branch_id'))?.value || 0)
+        || Number(readLastBranchId() || 0);
+    return n > 0 ? n : null;
+}
 
 const ENTITY_ORDER = {
     customer: 10,
@@ -10,6 +18,8 @@ const ENTITY_ORDER = {
     order: 50,
     payment: 60,
     supplier: 25,
+    supplier_bill: 26,
+    supplier_payment: 27,
 };
 
 export async function enqueueMutation({ entity, op, payload, branchId = null, clientUuid = null }) {
@@ -70,7 +80,7 @@ export async function markOutboxConflict(clientUuid, conflict) {
  */
 export async function queueOfflineSale(salePayload, meta = {}) {
     const clientUuid = uuid();
-    const branchId = meta.branchId || (await db.meta.get('active_branch_id'))?.value || null;
+    const branchId = await offlineBranchId(meta.branchId);
     const now = new Date().toISOString();
 
     const localSale = {
@@ -105,6 +115,17 @@ export async function queueOfflineSale(salePayload, meta = {}) {
                 stock_quantity: next,
                 updated_at: now,
             });
+            const lotId = Number(item.product_lot_id || item.lot_id || 0);
+            if (lotId && db.productLots) {
+                const lot = await db.productLots.get(lotId);
+                if (lot) {
+                    await db.productLots.put({
+                        ...lot,
+                        quantity: Math.max(0, Number(lot.quantity || 0) - qty),
+                        updated_at: now,
+                    });
+                }
+            }
             if (branchId) {
                 const key = [Number(branchId), Number(item.product_id)];
                 const stock = await db.branchStocks.get(key);
@@ -132,7 +153,7 @@ export async function queueOfflineSale(salePayload, meta = {}) {
 export async function queueOfflineCustomer(payload) {
     const clientUuid = uuid();
     const now = new Date().toISOString();
-    const branchId = payload.branch_id || (await db.meta.get('active_branch_id'))?.value || null;
+    const branchId = await offlineBranchId(payload.branch_id);
     const local = {
         id: `local-${clientUuid}`,
         client_uuid: clientUuid,
@@ -159,7 +180,7 @@ export async function queueOfflineCustomer(payload) {
 export async function queueOfflineExpense(payload) {
     const clientUuid = uuid();
     const now = new Date().toISOString();
-    const branchId = payload.branch_id || (await db.meta.get('active_branch_id'))?.value || null;
+    const branchId = await offlineBranchId(payload.branch_id);
     const local = {
         id: `local-${clientUuid}`,
         client_uuid: clientUuid,
@@ -183,7 +204,7 @@ export async function queueOfflineExpense(payload) {
 export async function queueOfflineSupplier(payload) {
     const clientUuid = uuid();
     const now = new Date().toISOString();
-    const branchId = payload.branch_id || (await db.meta.get('active_branch_id'))?.value || null;
+    const branchId = await offlineBranchId(payload.branch_id);
     const local = {
         id: `local-${clientUuid}`,
         client_uuid: clientUuid,
@@ -216,4 +237,144 @@ export async function queueOfflineSupplier(payload) {
         clientUuid,
     });
     return { clientUuid, local };
+}
+
+export async function supplierWallet(supplierId) {
+    const all = (await db.supplierTransactions.toArray()).filter(
+        (t) => String(t.supplier_id) === String(supplierId)
+    );
+    let credit = 0;
+    let debit = 0;
+    for (const t of all) {
+        const amt = Number(t.amount) || 0;
+        if (t.type === 'credit') {
+            credit += amt;
+        } else {
+            debit += amt;
+        }
+    }
+    return {
+        total_paid: debit,
+        remaining: credit - debit,
+        credit,
+        debit,
+        hasUnpaid: credit - debit > 0.009,
+    };
+}
+
+export async function queueOfflineSupplierBill(payload) {
+    const clientUuid = uuid();
+    const now = new Date().toISOString();
+    const branchId = await offlineBranchId(payload.branch_id);
+    const supplierId = payload.supplier_id;
+    const billAmount = Number(payload.bill_amount || payload.amount || 0);
+    const paidAmount = Number(payload.paid_amount || 0);
+    const billDate = payload.bill_date || payload.transaction_date || now.slice(0, 10);
+    const billId = `local-${clientUuid}`;
+    const creditUuid = uuid();
+
+    await db.supplierBills.put({
+        id: billId,
+        client_uuid: clientUuid,
+        supplier_id: supplierId,
+        branch_id: branchId,
+        bill_number: payload.bill_number || `OFF-${String(Date.now()).slice(-6)}`,
+        bill_amount: billAmount,
+        bill_date: billDate,
+        description: payload.description || null,
+        reference_number: payload.reference_number || null,
+        sync_status: 'pending',
+        updated_at: now,
+        created_at: now,
+    });
+
+    await db.supplierTransactions.put({
+        id: `local-${creditUuid}`,
+        client_uuid: creditUuid,
+        supplier_id: supplierId,
+        supplier_bill_id: billId,
+        branch_id: branchId,
+        type: 'credit',
+        amount: billAmount,
+        description: payload.description || `Bill ${payload.bill_number || ''}`,
+        transaction_date: billDate,
+        reference_number: payload.reference_number || null,
+        sync_status: 'pending',
+        updated_at: now,
+        created_at: now,
+    });
+
+    if (paidAmount > 0) {
+        const payUuid = uuid();
+        await db.supplierTransactions.put({
+            id: `local-${payUuid}`,
+            client_uuid: payUuid,
+            supplier_id: supplierId,
+            supplier_bill_id: billId,
+            branch_id: branchId,
+            type: 'debit',
+            amount: paidAmount,
+            description: payload.payment_description || 'Payment for bill',
+            transaction_date: payload.transaction_date || billDate,
+            reference_number: payload.reference_number || null,
+            sync_status: 'pending',
+            updated_at: now,
+            created_at: now,
+        });
+    }
+
+    await enqueueMutation({
+        entity: 'supplier_bill',
+        op: 'create',
+        payload: {
+            ...payload,
+            supplier_id: supplierId,
+            bill_amount: billAmount,
+            paid_amount: paidAmount,
+            bill_date: billDate,
+        },
+        branchId,
+        clientUuid,
+    });
+
+    return { clientUuid, billId };
+}
+
+export async function queueOfflineSupplierPayment(payload) {
+    const clientUuid = uuid();
+    const now = new Date().toISOString();
+    const branchId = await offlineBranchId(payload.branch_id);
+    const supplierId = payload.supplier_id;
+    const amount = Number(payload.amount || 0);
+    const txDate = payload.transaction_date || now.slice(0, 10);
+
+    await db.supplierTransactions.put({
+        id: `local-${clientUuid}`,
+        client_uuid: clientUuid,
+        supplier_id: supplierId,
+        supplier_bill_id: payload.supplier_bill_id || null,
+        branch_id: branchId,
+        type: 'debit',
+        amount,
+        description: payload.description || 'Payment',
+        transaction_date: txDate,
+        reference_number: payload.reference_number || null,
+        sync_status: 'pending',
+        updated_at: now,
+        created_at: now,
+    });
+
+    await enqueueMutation({
+        entity: 'supplier_payment',
+        op: 'create',
+        payload: {
+            ...payload,
+            amount,
+            transaction_date: txDate,
+        },
+        branchId,
+        clientUuid,
+    });
+
+    return { clientUuid };
 }

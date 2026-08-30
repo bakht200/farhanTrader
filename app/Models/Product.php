@@ -20,7 +20,7 @@ class Product extends Model
         'name', 'slug', 'brand', 'sku', 'description', 'category_id', 'unit_id', 'base_unit_id',
         'selling_type', 'total_units', 'supplier_name', 'supplier_phone', 'supplier_id',
         'product_type', 'quantity_alert', 'purchase_price', 'selling_price',
-        'retail_price', 'wholesale_price', 'stock_quantity', 'low_stock_threshold',
+        'retail_price', 'wholesale_price', 'extra_price', 'stock_quantity', 'low_stock_threshold',
         'manufacturer', 'manufactured_date', 'expiry_date', 'image', 'is_active', 'user_id',
         'owner_branch_id',
     ];
@@ -33,6 +33,7 @@ class Product extends Model
         'selling_price' => 'decimal:2',
         'retail_price' => 'decimal:2',
         'wholesale_price' => 'decimal:2',
+        'extra_price' => 'decimal:2',
     ];
 
     public function category(): BelongsTo
@@ -84,6 +85,11 @@ class Product extends Model
     public function productUnits(): HasMany
     {
         return $this->hasMany(ProductUnit::class);
+    }
+
+    public function lots(): HasMany
+    {
+        return $this->hasMany(ProductLot::class);
     }
 
     public function sellingUnits()
@@ -307,6 +313,11 @@ class Product extends Model
         return $this->resolvePriceAttribute('wholesale_price', $value);
     }
 
+    public function getExtraPriceAttribute($value): mixed
+    {
+        return $this->resolvePriceAttribute('extra_price', $value);
+    }
+
     protected function resolvePriceAttribute(string $column, $value): mixed
     {
         if (! $this->exists) {
@@ -314,6 +325,9 @@ class Product extends Model
         }
 
         $override = $this->branchOverrideValue($column);
+        if ($column === 'extra_price' && ($override === null || $override === '' || (float) $override == 0.0)) {
+            return $value;
+        }
         if ($override !== null && $override !== '') {
             return $override;
         }

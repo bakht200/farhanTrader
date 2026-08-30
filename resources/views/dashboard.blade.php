@@ -3,6 +3,11 @@
         Dashboard
     </x-slot>
 
+    @if(! empty($needsBranchSelection))
+        <div class="bg-white rounded-lg shadow p-8 text-center text-gray-600">
+            Select a branch to see this store’s dashboard.
+        </div>
+    @else
     <!-- Welcome Message -->
     <div class="bg-gray-50 rounded-lg p-4 mb-4">
         <p class="text-gray-700">
@@ -274,4 +279,5 @@
             }
         });
     </script>
+    @endif
 </x-app-layout>

@@ -67,4 +67,37 @@ class AuthenticationTest extends TestCase
     {
         $this->getJson('/sync/ping')->assertUnauthorized();
     }
+
+    public function test_login_page_is_not_cached(): void
+    {
+        $cacheControl = (string) $this->get('/login')->assertOk()->headers->get('Cache-Control');
+
+        $this->assertStringContainsString('no-store', $cacheControl);
+    }
+
+    public function test_csrf_token_endpoint_returns_a_token(): void
+    {
+        $this->getJson('/csrf-token')
+            ->assertOk()
+            ->assertJsonStructure(['token']);
+    }
+
+    public function test_login_expired_query_shows_a_friendly_message(): void
+    {
+        $this->get('/login?expired=1')
+            ->assertOk()
+            ->assertSee('Your session expired. Please sign in again.');
+    }
+
+    public function test_http_419_redirects_to_login_instead_of_expired_page(): void
+    {
+        $request = \Illuminate\Http\Request::create('/login', 'POST');
+        $request->setLaravelSession($this->app['session']->driver());
+
+        $response = $this->app->make(\Illuminate\Contracts\Debug\ExceptionHandler::class)
+            ->render($request, new \Symfony\Component\HttpKernel\Exception\HttpException(419, 'CSRF token mismatch.'));
+
+        $this->assertTrue($response->isRedirect(route('login', ['expired' => 1])));
+        $this->assertStringNotContainsString('PAGE EXPIRED', $response->getContent());
+    }
 }

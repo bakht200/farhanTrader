@@ -73,9 +73,26 @@ class OfflinePagesTest extends TestCase
         $this->actingAs($admin);
         $this->assertNull(CurrentBranch::id($admin));
 
-        $this->get('/sales/pos')->assertOk();
-        $this->get('/products/low-stocks')->assertOk();
+        $this->get('/sales/pos')->assertOk()->assertSee('data-ftpos-catalog="no-branch"', false)->assertSee('Upload to cloud');
+        $this->get('/products/low-stocks')->assertOk()->assertSee('Upload to cloud');
         $this->get('/branches/receipt-settings/edit')->assertOk();
+    }
+
+    public function test_branch_pos_marks_catalog_ready_and_shows_version(): void
+    {
+        $branch = $this->makeBranch('POS Shop');
+        $this->makeProductForBranch($branch, ['name' => 'POS Widget'], 4);
+        $user = $this->makeBranchUser($branch);
+        $this->actingAs($user);
+
+        $this->get('/sales/pos')
+            ->assertOk()
+            ->assertSee('data-ftpos-catalog="ok"', false)
+            ->assertSee('POS Widget');
+
+        $this->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Version 2.3');
     }
 
     public function test_sync_bootstrap_only_includes_the_current_branch_catalog(): void
@@ -95,7 +112,7 @@ class OfflinePagesTest extends TestCase
         $this->assertSame($branchA->id, $payload['active_branch_id']);
     }
 
-    public function test_admin_bootstrap_without_switch_uses_phandu_catalog(): void
+    public function test_admin_bootstrap_without_switch_does_not_use_phandu_catalog(): void
     {
         $phandu = \App\Models\Branch::query()->findOrFail(1);
         $other = $this->makeBranch('Other Cache');
@@ -107,8 +124,35 @@ class OfflinePagesTest extends TestCase
         $payload = $this->getJson('/sync/bootstrap')->assertOk()->json();
         $ids = collect($payload['products'] ?? [])->pluck('id')->all();
 
-        $this->assertContains($keep->id, $ids);
+        $this->assertNotContains($keep->id, $ids);
         $this->assertNotContains($hidden->id, $ids);
-        $this->assertSame(1, $payload['active_branch_id']);
+        $this->assertNull($payload['active_branch_id']);
+        $this->assertTrue(\App\Models\Product::query()->whereKey($keep->id)->exists());
+    }
+
+    public function test_admin_bootstrap_uses_the_selected_branch_catalog(): void
+    {
+        $notia = $this->makeBranch('Notia');
+        $ashraf = $this->makeBranch('Ashraf road');
+        $notiaProduct = $this->makeProductForBranch($notia, ['name' => 'Notia Item'], 3);
+        $ashrafProduct = $this->makeProductForBranch($ashraf, ['name' => 'Ashraf Item'], 3);
+        $this->makeAdmin($notia);
+
+        $payload = $this->getJson('/sync/bootstrap')->assertOk()->json();
+        $ids = collect($payload['products'] ?? [])->pluck('id')->all();
+
+        $this->assertContains($notiaProduct->id, $ids);
+        $this->assertNotContains($ashrafProduct->id, $ids);
+        $this->assertSame($notia->id, $payload['active_branch_id']);
+    }
+
+    public function test_offline_fallback_page_retries_the_shop_connection(): void
+    {
+        $html = file_get_contents(public_path('offline.html'));
+
+        $this->assertNotFalse($html);
+        $this->assertStringContainsString("fetch('/up'", $html);
+        $this->assertStringContainsString('tryRecover()', $html);
+        $this->assertStringContainsString('CONNECTIVITY', $html);
     }
 }

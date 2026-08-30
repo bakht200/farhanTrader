@@ -3,11 +3,15 @@
 namespace Tests\Feature;
 
 use App\Models\BranchProductStock;
+use App\Models\Category;
 use App\Models\Customer;
 use App\Models\Expense;
 use App\Models\Invoice;
+use App\Models\ProductLot;
+use App\Models\ProductUnit;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\Unit;
 use App\Models\User;
 use App\Services\BranchStockService;
 use App\Support\CurrentBranch;
@@ -242,7 +246,12 @@ class BranchIsolationTest extends TestCase
 
         $this->actingAs($admin);
         $this->from('/')->get('/')->assertRedirect(route('dashboard'));
-        $this->from('/')->get(route('dashboard'))->assertOk();
+        $this->from('/')->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('Select a branch')
+            ->assertSee('data-ft-branch-required', false)
+            ->assertDontSee('Recent Transactions')
+            ->assertDontSee('Total Customers');
     }
 
     public function test_admin_switch_mutates_only_selected_branch(): void
@@ -528,6 +537,279 @@ class BranchIsolationTest extends TestCase
         $fresh = $product->fresh();
         $this->assertSame('MEETA SODA (1*25KG)', $fresh->getAttributes()['name']);
         $this->assertEquals(3300.0, (float) $fresh->getAttributes()['purchase_price']);
+    }
+
+    public function test_branch_user_cannot_write_phandu_catalog_extra_units_stock_or_lots(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $kg = Unit::factory()->create(['name' => 'Kilogram', 'short_name' => 'KG']);
+
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'extra_price' => 12,
+            'selling_type' => 'retail',
+        ], 100);
+        ProductUnit::query()->create([
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'is_base_unit' => true,
+            'selling_price' => 4000,
+            'is_active' => true,
+        ]);
+        $phanduLot = ProductLot::query()->create([
+            'branch_id' => $phandu->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 100,
+            'purchase_price' => 3070,
+            'extra_price' => 12,
+            'retail_price' => 4000,
+            'wholesale_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'stock_quantity' => 6,
+            'selling_type' => 'retail',
+        ]);
+        $ashrafLot = ProductLot::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 6,
+            'purchase_price' => 3070,
+            'extra_price' => 0,
+            'retail_price' => 4000,
+            'wholesale_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($ashrafUser);
+        $this->put(route('products.update', $product), $this->branchProductEditPayload([
+            'name' => 'MEETA SODA HACKED',
+            'purchase_price' => 1,
+            'retail_price' => 2,
+            'selling_price' => 2,
+            'stock_quantity' => 999,
+            'add_received_qty' => 4,
+            'add_received_unit_id' => $product->unit_id,
+            'add_lot_id' => $ashrafLot->id,
+            'units' => [[
+                'unit_id' => $kg->id,
+                'is_base_unit' => 0,
+                'retail_price' => 1,
+            ]],
+            'conversions' => [[
+                'from_unit_id' => $product->unit_id,
+                'to_unit_id' => $kg->id,
+                'factor' => 99,
+            ]],
+        ]))->assertRedirect(route('products.index'));
+
+        $fresh = $product->fresh();
+        $this->assertSame('MEETA SODA', $fresh->getAttributes()['name']);
+        $this->assertEquals(3070.0, (float) $fresh->getAttributes()['purchase_price']);
+        $this->assertEquals(12.0, (float) $fresh->getAttributes()['extra_price']);
+        $this->assertEquals(100.0, (float) BranchProductStock::query()
+            ->where('branch_id', $phandu->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertEquals(10.0, (float) BranchProductStock::query()
+            ->where('branch_id', $ashraf->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertEquals(100.0, (float) $phanduLot->fresh()->quantity);
+        $this->assertEquals(10.0, (float) $ashrafLot->fresh()->quantity);
+        $this->assertSame(1, ProductUnit::query()->where('product_id', $product->id)->count());
+        $this->assertDatabaseMissing('unit_conversions', ['product_id' => $product->id]);
+    }
+
+    public function test_branch_user_cannot_add_received_stock_onto_admin_lot(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+        ], 100);
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'stock_quantity' => 6,
+            'selling_type' => 'retail',
+        ]);
+        $phanduLot = ProductLot::query()->create([
+            'branch_id' => $phandu->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 100,
+            'purchase_price' => 3070,
+            'extra_price' => 0,
+            'retail_price' => 4000,
+            'wholesale_price' => 4000,
+            'selling_price' => 4000,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($ashrafUser);
+        $this->from(route('products.edit', $product))
+            ->put(route('products.update', $product), $this->branchProductEditPayload([
+                'name' => 'MEETA SODA',
+                'purchase_price' => 3070,
+                'retail_price' => 4000,
+                'selling_price' => 4000,
+                'stock_quantity' => 6,
+                'add_received_qty' => 5,
+                'add_received_unit_id' => $product->unit_id,
+                'add_lot_id' => $phanduLot->id,
+            ]))
+            ->assertRedirect(route('products.edit', $product))
+            ->assertSessionHasErrors('add_lot_id');
+
+        $this->assertEquals(100.0, (float) $phanduLot->fresh()->quantity);
+        $this->assertEquals(100.0, (float) BranchProductStock::query()
+            ->where('branch_id', $phandu->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertEquals(6.0, (float) BranchProductStock::query()
+            ->where('branch_id', $ashraf->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+    }
+
+    public function test_branch_supplier_bill_extra_does_not_change_phandu_catalog_extra(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $product = $this->makeProductForBranch($phandu, [
+            'name' => 'MEETA SODA',
+            'purchase_price' => 3070,
+            'retail_price' => 4000,
+            'selling_price' => 4000,
+            'extra_price' => 8,
+            'selling_type' => 'retail',
+        ], 100);
+        $supplier = $this->makeSupplierForBranch($ashraf, ['name' => 'Ashraf Supplier']);
+
+        $this->actingAs($ashrafUser);
+        $this->post(route('suppliers.transactions.store', $supplier), [
+            'type' => 'credit',
+            'create_bill' => '1',
+            'transaction_date' => now()->toDateString(),
+            'bill_date' => now()->toDateString(),
+            'products' => [[
+                'product_id' => $product->id,
+                'product_name' => 'MEETA SODA BRANCH',
+                'quantity' => 2,
+                'unit_price' => 3500,
+                'extra_price' => 99.5,
+                'total' => 7000,
+            ]],
+        ])->assertRedirect(route('suppliers.show', $supplier));
+
+        $fresh = $product->fresh();
+        $this->assertSame('MEETA SODA', $fresh->getAttributes()['name']);
+        $this->assertEquals(3070.0, (float) $fresh->getAttributes()['purchase_price']);
+        $this->assertEquals(8.0, (float) $fresh->getAttributes()['extra_price']);
+        $this->assertEquals(100.0, (float) BranchProductStock::query()
+            ->where('branch_id', $phandu->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertEquals(2.0, (float) BranchProductStock::query()
+            ->where('branch_id', $ashraf->id)
+            ->where('product_id', $product->id)
+            ->value('stock_quantity'));
+        $this->assertEquals(99.5, (float) BranchProductStock::query()
+            ->where('branch_id', $ashraf->id)
+            ->where('product_id', $product->id)
+            ->value('extra_price'));
+        $this->assertEquals(0, ProductLot::query()
+            ->where('product_id', $product->id)
+            ->where('branch_id', $phandu->id)
+            ->count());
+    }
+
+    public function test_branch_user_cannot_change_or_see_admin_suppliers_categories_or_units(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $adminSupplier = $this->makeSupplierForBranch($phandu, ['name' => 'Phandu Supplier']);
+        $category = Category::factory()->create(['name' => 'Admin Category']);
+        $unit = Unit::factory()->create(['name' => 'Admin Unit', 'short_name' => 'AU']);
+
+        $this->actingAs($ashrafUser);
+        $this->put(route('suppliers.update', $adminSupplier), [
+            'name' => 'Hacked Supplier',
+            'phone' => '03001111111',
+        ])->assertNotFound();
+        $this->delete(route('suppliers.destroy', $adminSupplier))->assertNotFound();
+        $this->assertSame('Phandu Supplier', $adminSupplier->fresh()->name);
+
+        $this->post(route('categories.store'), ['name' => 'Branch Category', 'is_active' => 1])->assertForbidden();
+        $this->put(route('categories.update', $category), ['name' => 'Hacked Category'])->assertForbidden();
+        $this->assertSame('Admin Category', $category->fresh()->name);
+
+        $this->post(route('units.store'), ['name' => 'Branch Unit', 'short_name' => 'BU', 'is_active' => 1])->assertForbidden();
+        $this->put(route('units.update', $unit), ['name' => 'Hacked Unit', 'short_name' => 'HU'])->assertForbidden();
+        $this->assertSame('Admin Unit', $unit->fresh()->name);
+    }
+
+    public function test_branch_user_cannot_delete_phandu_catalog_product(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $product = $this->makeProductForBranch($phandu, ['name' => 'MEETA SODA'], 100);
+        BranchProductStock::query()
+            ->where('product_id', $product->id)
+            ->where('branch_id', $phandu->id)
+            ->delete();
+        BranchProductStock::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'stock_quantity' => 6,
+            'selling_type' => 'retail',
+        ]);
+
+        $this->actingAs($ashrafUser);
+        $this->delete(route('products.destroy', $product))->assertForbidden();
+        $this->assertDatabaseHas('products', ['id' => $product->id, 'name' => 'MEETA SODA']);
+    }
+
+    public function test_branch_owned_product_and_supplier_do_not_appear_on_phandu(): void
+    {
+        $phandu = \App\Models\Branch::query()->findOrFail(1);
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $admin = $this->makeAdmin($phandu);
+
+        $this->actingAs($ashrafUser);
+        $localProduct = $this->makeProductForBranch($ashraf, ['name' => 'ASHRAF ONLY SUGAR'], 3);
+        $localSupplier = $this->makeSupplierForBranch($ashraf, ['name' => 'ASHRAF ONLY SUPPLIER']);
+
+        $this->actingAs($admin);
+        CurrentBranch::setActive($phandu->id);
+        $this->get(route('products.index'))->assertOk()->assertDontSee('ASHRAF ONLY SUGAR');
+        $this->get(route('suppliers.index'))->assertOk()->assertDontSee('ASHRAF ONLY SUPPLIER');
+        $this->assertSame($ashraf->id, (int) $localProduct->fresh()->owner_branch_id);
+        $this->assertSame($ashraf->id, (int) $localSupplier->fresh()->branch_id);
     }
 
     protected function branchProductEditPayload(array $overrides = []): array

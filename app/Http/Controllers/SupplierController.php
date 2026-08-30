@@ -11,6 +11,7 @@ use App\Models\ProductHistory;
 use App\Models\ProductUnit;
 use App\Models\Category;
 use App\Models\Unit;
+use App\Models\UnitConversion;
 use App\Services\BranchStockService;
 use App\Support\CurrentBranch;
 use Illuminate\Database\QueryException;
@@ -335,6 +336,20 @@ class SupplierController extends Controller
         return view('suppliers.create');
     }
 
+    public function anonymousPurchase(Request $request)
+    {
+        $supplier = Supplier::findOrCreateAnonymous();
+
+        // POST (the button) redirects so the browser URL is the real bill form.
+        // GET serves the form here so a bookmarked / refresh of this path still works
+        // and is not a 302 that the offline service worker cannot handle.
+        if ($request->isMethod('post')) {
+            return redirect()->route('suppliers.transactions.create', $supplier);
+        }
+
+        return $this->createTransaction($supplier);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
@@ -586,6 +601,7 @@ class SupplierController extends Controller
         $productsData = $this->billFormProductsPayload($products);
         $categories = Category::where('is_active', true)->orderBy('name')->get();
         $units = Unit::where('is_active', true)->orderBy('name')->get();
+        $forceNewProducts = (bool) $supplier->is_anonymous;
 
         return view('suppliers.transactions.create', compact(
             'supplier',
@@ -596,12 +612,28 @@ class SupplierController extends Controller
             'products',
             'productsData',
             'categories',
-            'units'
+            'units',
+            'forceNewProducts'
         ));
     }
 
     public function storeTransaction(Request $request, Supplier $supplier)
     {
+        if ($supplier->is_anonymous) {
+            $products = $request->input('products', []);
+            if (is_array($products)) {
+                foreach ($products as $index => $productData) {
+                    $products[$index]['create_new'] = '1';
+                }
+            }
+            $request->merge([
+                'type' => 'credit',
+                'create_bill' => '1',
+                'transaction_date' => $request->input('transaction_date') ?: now()->toDateString(),
+                'products' => $products,
+            ]);
+        }
+
         // Custom validation: if creating a bill, either amount or products must be provided
         $rules = [
             'type' => 'required|in:credit,debit',
@@ -629,6 +661,14 @@ class SupplierController extends Controller
             'products.*.selling_type' => 'nullable|in:retail,wholesale,both',
             'products.*.retail_price' => 'nullable|numeric|min:0',
             'products.*.wholesale_price' => 'nullable|numeric|min:0',
+            'products.*.extra_price' => 'nullable|numeric|min:0',
+            'products.*.create_new' => 'nullable',
+            'products.*.conversion_to_unit_id' => 'nullable|exists:units,id',
+            'products.*.conversion_factor' => 'nullable|numeric|min:0.01',
+            'products.*.conversions' => 'nullable|array',
+            'products.*.conversions.*.from_unit_id' => 'nullable|exists:units,id',
+            'products.*.conversions.*.to_unit_id' => 'nullable|exists:units,id',
+            'products.*.conversions.*.factor' => 'nullable|numeric|min:0.01',
         ];
         
         // If creating a bill without products, amount is required
@@ -656,6 +696,10 @@ class SupplierController extends Controller
                 ])->withInput();
             }
             $validated['amount'] = $billAmount;
+        }
+
+        if ($supplier->is_anonymous) {
+            $validated['paid_amount'] = $validated['amount'] ?? 0;
         }
 
         $billImagePath = null;
@@ -690,6 +734,14 @@ class SupplierController extends Controller
                                 ? $product->incrementStock($quantityToAdd, $stockBranchId)
                                 : $oldStock;
 
+                            $lot = app(\App\Services\ProductLotService::class)->receive(
+                                $product,
+                                $productData,
+                                $supplier,
+                                $stockBranchId,
+                                (int) $bill->id
+                            );
+
                             ProductHistory::create([
                                 'product_id' => $product->id,
                                 'supplier_id' => $supplier->id,
@@ -709,6 +761,7 @@ class SupplierController extends Controller
                             SupplierBillItem::create([
                                 'supplier_bill_id' => $bill->id,
                                 'product_id' => $product->id,
+                                'product_lot_id' => $lot->id,
                                 'product_name' => $productData['product_name'] ?? $product->name,
                                 'product_sku' => $productData['product_sku'] ?? $product->sku,
                                 'quantity' => $quantityToAdd,
@@ -756,6 +809,10 @@ class SupplierController extends Controller
                 ])->withInput();
             }
             throw $e;
+        }
+
+        if ($supplier->is_anonymous) {
+            return redirect()->route('suppliers.index')->with('success', 'Cash purchase saved. Products were added to stock.');
         }
 
         return redirect()->route('suppliers.show', $supplier)->with('success', 'Transaction added successfully.');
@@ -815,7 +872,7 @@ class SupplierController extends Controller
         }
 
         // Load bill with items
-        $bill->load('items');
+        $bill->load('items.product');
         
         // Get products, categories, and units for product selection
         $products = $this->billFormProducts();
@@ -851,6 +908,7 @@ class SupplierController extends Controller
             'products.*.product_sku' => 'nullable|string|max:255',
             'products.*.quantity' => 'required|numeric|min:0.01',
             'products.*.unit_price' => 'required|numeric|min:0',
+            'products.*.extra_price' => 'nullable|numeric|min:0',
             'products.*.discount' => 'nullable|numeric|min:0|max:100',
             'products.*.tax' => 'nullable|numeric|min:0',
             'products.*.total' => 'required|numeric|min:0',
@@ -1139,6 +1197,10 @@ class SupplierController extends Controller
 
     public function destroy(Supplier $supplier)
     {
+        if ($supplier->is_anonymous) {
+            return back()->withErrors(['error' => 'The Anonymous cash-purchase supplier cannot be deleted.']);
+        }
+
         $supplier->delete();
         return redirect()->route('suppliers.index')->with('success', 'Supplier deleted successfully.');
     }
@@ -1207,6 +1269,7 @@ class SupplierController extends Controller
                 'selling_type' => $p->selling_type ?? 'both',
                 'retail_price' => $p->retail_price ?? 0,
                 'wholesale_price' => $p->wholesale_price ?? 0,
+                'extra_price' => $p->extra_price ?? 0,
                 'available_units' => $availableUnits->values()->all(),
             ];
         })->values();
@@ -1229,20 +1292,25 @@ class SupplierController extends Controller
         $productId = ! empty($productData['product_id']) ? (int) $productData['product_id'] : null;
         $productName = trim((string) ($productData['product_name'] ?? ''));
         $productSku = trim((string) ($productData['product_sku'] ?? ''));
-        $product = $productId ? Product::query()->find($productId) : null;
+        $forceNew = $this->billLineCreatesNewProduct($productData);
+
+        $product = null;
+        if (! $forceNew && $productId) {
+            $product = Product::query()->find($productId);
+        }
 
         if ($product && ! $product->isPurchasableByCurrentBranch()) {
             $product = null;
         }
 
-        if (! $product && $productSku !== '') {
+        if (! $forceNew && ! $product && $productSku !== '') {
             $bySku = Product::query()->where('sku', $productSku)->first();
             if ($bySku && $bySku->isPurchasableByCurrentBranch()) {
                 $product = $bySku;
             }
         }
 
-        if (! $product && $productName !== '') {
+        if (! $forceNew && ! $product && $productName !== '') {
             $byName = Product::query()
                 ->purchasableOnBill()
                 ->where('name', $productName)
@@ -1255,6 +1323,8 @@ class SupplierController extends Controller
         if ($product) {
             $branchId = CurrentBranch::requireId();
             app(BranchStockService::class)->ensureMembership($product, $branchId);
+            $product->unsetRelation('currentBranchStock');
+            app(\App\Services\ProductLotService::class)->preserveUnlottedStock($product, $branchId);
             $this->syncBillProductPricing($product, $productData, $supplier, $branchId);
 
             return ['product' => $product->fresh() ?? $product, 'created' => false];
@@ -1294,12 +1364,13 @@ class SupplierController extends Controller
         }
 
         $purchasePrice = (float) ($productData['unit_price'] ?? 0);
+        $extraPrice = (float) ($productData['extra_price'] ?? 0);
         $sellingType = $productData['selling_type'] ?? 'both';
         [$retailPrice, $wholesalePrice, $sellingPrice] = $this->billLineSellingPrices($productData, $purchasePrice, $sellingType);
         $baseUnitId = $productData['base_unit_id'] ?? $unitId;
         $currentBranchId = CurrentBranch::requireId();
 
-        if ($productSku && Product::query()->where('sku', $productSku)->exists()) {
+        if ($this->billLineCreatesNewProduct($productData) || ($productSku && Product::query()->where('sku', $productSku)->exists())) {
             $productSku = $this->generateSku($productName);
         }
 
@@ -1316,6 +1387,7 @@ class SupplierController extends Controller
             'selling_price' => $sellingPrice,
             'retail_price' => $retailPrice,
             'wholesale_price' => $wholesalePrice,
+            'extra_price' => $extraPrice,
             'stock_quantity' => 0,
             'low_stock_threshold' => 10,
             'selling_type' => $sellingType,
@@ -1336,6 +1408,9 @@ class SupplierController extends Controller
             $sellingType,
             false
         );
+        app(BranchStockService::class)->setOverrides($product, [
+            'extra_price' => $extraPrice,
+        ], $currentBranchId);
 
         ProductUnit::query()->create([
             'product_id' => $product->id,
@@ -1345,7 +1420,77 @@ class SupplierController extends Controller
             'is_active' => true,
         ]);
 
+        $this->attachBillLineConversion($product, $productData, (int) $baseUnitId);
+
         return $product;
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     */
+    private function billLineCreatesNewProduct(array $productData): bool
+    {
+        $raw = $productData['create_new'] ?? null;
+        if ($raw === true || $raw === 1 || $raw === '1' || $raw === 'on' || $raw === 'true') {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $productData
+     */
+    private function attachBillLineConversion(Product $product, array $productData, int $baseUnitId): void
+    {
+        $rows = [];
+        if (! empty($productData['conversions']) && is_array($productData['conversions'])) {
+            foreach ($productData['conversions'] as $conversion) {
+                $rows[] = [
+                    'to_unit_id' => (int) ($conversion['to_unit_id'] ?? 0),
+                    'factor' => round((float) ($conversion['factor'] ?? 0), 2),
+                ];
+            }
+        } else {
+            $rows[] = [
+                'to_unit_id' => (int) ($productData['conversion_to_unit_id'] ?? 0),
+                'factor' => round((float) ($productData['conversion_factor'] ?? 0), 2),
+            ];
+        }
+
+        foreach ($rows as $row) {
+            $toUnitId = $row['to_unit_id'];
+            $factor = $row['factor'];
+            if ($toUnitId <= 0 || $factor < 0.01 || $toUnitId === $baseUnitId) {
+                continue;
+            }
+
+            $exists = ProductUnit::query()
+                ->where('product_id', $product->id)
+                ->where('unit_id', $toUnitId)
+                ->exists();
+            if (! $exists) {
+                ProductUnit::query()->create([
+                    'product_id' => $product->id,
+                    'unit_id' => $toUnitId,
+                    'is_base_unit' => false,
+                    'selling_price' => null,
+                    'is_active' => true,
+                ]);
+            }
+
+            UnitConversion::query()->updateOrCreate(
+                [
+                    'product_id' => $product->id,
+                    'from_unit_id' => $baseUnitId,
+                    'to_unit_id' => $toUnitId,
+                ],
+                [
+                    'conversion_factor' => $factor,
+                    'is_active' => true,
+                ]
+            );
+        }
     }
 
     /**
@@ -1385,6 +1530,9 @@ class SupplierController extends Controller
     private function syncBillProductPricing(Product $product, array $productData, Supplier $supplier, int $branchId): void
     {
         $purchasePrice = (float) ($productData['unit_price'] ?? $product->getAttributes()['purchase_price'] ?? 0);
+        $extraPrice = array_key_exists('extra_price', $productData)
+            ? (float) $productData['extra_price']
+            : (float) ($product->extra_price ?? 0);
         $sellingType = $productData['selling_type'] ?? ($product->getAttributes()['selling_type'] ?? 'both');
         [$retailPrice, $wholesalePrice, $sellingPrice] = $this->billLineSellingPrices($productData, $purchasePrice, $sellingType);
 
@@ -1392,6 +1540,7 @@ class SupplierController extends Controller
             $attrs = $product->getAttributes();
             $payload = [
                 'purchase_price' => $purchasePrice,
+                'extra_price' => $extraPrice,
             ];
             if ((float) ($attrs['retail_price'] ?? 0) <= 0) {
                 $payload['retail_price'] = $retailPrice;
@@ -1416,6 +1565,7 @@ class SupplierController extends Controller
 
         $overrides = [
             'purchase_price' => $purchasePrice,
+            'extra_price' => $extraPrice,
         ];
         if (! empty($productData['selling_type'])) {
             $overrides['selling_type'] = $sellingType;

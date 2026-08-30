@@ -5,6 +5,7 @@
 
     <style>[x-cloak] { display: none !important; }</style>
 
+    <div data-ftpos-page="supplier-show" data-ftpos-supplier-id="{{ $supplier->id }}">
     <!-- Breadcrumb -->
     <div class="mb-4">
         <nav class="text-sm text-gray-600">
@@ -27,11 +28,16 @@
             <div>
                 <h2 class="text-2xl font-bold text-gray-900">{{ $supplier->name }}</h2>
                 <p class="text-sm text-gray-500">Supplier ID: {{ $supplier->supplier_id ?? 'SN-' . str_pad($supplier->id, 3, '0', STR_PAD_LEFT) }}</p>
+                @if($supplier->is_anonymous)
+                    <p class="mt-2 text-sm text-slate-600">Cash purchases from people who are not a saved supplier.</p>
+                @endif
             </div>
             <div class="flex space-x-2">
+                @unless($supplier->is_anonymous)
                 <a href="{{ route('suppliers.edit', $supplier) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md">
                     Edit Supplier
                 </a>
+                @endunless
                 <a href="{{ route('suppliers.index') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md">
                     Back to List
                 </a>
@@ -385,6 +391,7 @@
             </div>
         </div>
         @endif
+    </div>
     </div>
 
     <script>

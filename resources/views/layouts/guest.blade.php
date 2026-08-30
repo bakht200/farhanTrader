@@ -197,7 +197,7 @@
 
                     <div class="mt-6 text-center text-sm text-gray-600 space-y-1">
                         <div>Copyrights © 2025 - FTPOS</div>
-                        <div class="text-xs text-gray-500">Version {{ config('app.version', '1.1') }}</div>
+                        <div class="text-xs text-gray-500">Version {{ config('app.version', '2.0') }}</div>
                         <div class="text-xs text-gray-500">Design &amp; developed by <a href="https://wa.me/923330915166" target="_blank" rel="noopener noreferrer" class="text-orange-600 hover:text-orange-700 font-medium underline">Bakht Biland</a></div>
                     </div>
                 </div>

@@ -4,15 +4,16 @@
     <!-- Session Status -->
     <x-auth-session-status class="mb-4" :status="session('status')" />
 
-    @if (session('error'))
+    @if (session('error') || request('expired'))
         <div class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            {{ session('error') }}
+            {{ session('error') ?: 'Your session expired. Please sign in again.' }}
         </div>
     @endif
 
     <div class="mb-6">
         <h2 class="text-3xl font-bold text-gray-800 mb-2">Sign In</h2>
         <p class="text-gray-600">Access the Farhan Traders panel using your email and passcode.</p>
+        <p class="mt-2 text-sm text-gray-500">After this PC has signed in once while online, you can open this page and work with Wi‑Fi off. Use <strong>Upload to cloud</strong> when the internet is back.</p>
     </div>
 
     <div id="ftpos-offline-gate" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

@@ -1,7 +1,7 @@
 import { pendingOutboxCount } from './db';
-import { getConnectivityStatus, onConnectivityChange, isOnline } from './connectivity';
+import { getConnectivityStatus, onConnectivityChange, isOnline, checkNow } from './connectivity';
 import { onBroadcast, broadcast } from './broadcast';
-import { syncNow } from './sync';
+import { syncNow, uploadPendingToCloud } from './sync';
 import { hasAnyVault } from './authVault';
 
 let lastSyncState = null;
@@ -87,6 +87,23 @@ function applyPill(pill, pendingEl, { online, pending, syncing }) {
             pendingEl.textContent = '';
         }
     }
+
+    document.querySelectorAll('[data-ftpos-upload]').forEach((btn) => {
+        if (btn.dataset.uploading === '1') {
+            return;
+        }
+        btn.disabled = false;
+        if (syncing) {
+            btn.textContent = 'Uploading…';
+        } else if (pending > 0) {
+            btn.textContent = `Upload to cloud (${pending})`;
+        } else {
+            btn.textContent = 'Upload to cloud';
+        }
+        btn.title = pending > 0
+            ? 'Send sales and other work from this PC to the cloud when you have internet'
+            : 'Nothing waiting — tap after you work offline to send new changes';
+    });
 }
 
 async function renderStatusPills(extra = {}) {
@@ -115,6 +132,63 @@ async function renderStatusPills(extra = {}) {
     );
 }
 
+function ensureUploadButton(afterId, buttonId, className) {
+    let btn = document.getElementById(buttonId);
+    if (btn) {
+        return btn;
+    }
+    const after = document.getElementById(afterId);
+    if (!after || !after.parentElement) {
+        return null;
+    }
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = buttonId;
+    btn.setAttribute('data-ftpos-upload', '1');
+    btn.className = className;
+    btn.textContent = 'Upload to cloud';
+    after.insertAdjacentElement('afterend', btn);
+    return btn;
+}
+
+async function handleUploadClick(event) {
+    const btn = event.currentTarget;
+    btn.dataset.uploading = '1';
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    try {
+        const result = await uploadPendingToCloud();
+        const leftover = await pendingOutboxCount();
+        if (result.pushed > 0 && leftover === 0) {
+            showToast(`Uploaded ${result.pushed} change(s) to the cloud`);
+        } else if (result.pushed > 0) {
+            showToast(`Uploaded ${result.pushed}. ${leftover} still waiting.`);
+        } else {
+            showToast('Everything is already on the cloud');
+        }
+    } catch (e) {
+        if (e?.name === 'SessionExpired' || /session expired/i.test(e.message || '')) {
+            const { redirectToLogin } = await import('./session');
+            redirectToLogin();
+            return;
+        }
+        showToast(e.message || 'Upload failed');
+    } finally {
+        btn.dataset.uploading = '0';
+        btn.disabled = false;
+        await renderStatusPills();
+    }
+}
+
+function bindUploadClick(id) {
+    const btn = document.getElementById(id);
+    if (!btn || btn.dataset.bound === '1') {
+        return;
+    }
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', handleUploadClick);
+}
+
 function bindPillClick(id) {
     const pill = document.getElementById(id);
     if (!pill || pill.dataset.bound === '1') {
@@ -123,7 +197,11 @@ function bindPillClick(id) {
     pill.dataset.bound = '1';
     pill.addEventListener('click', async () => {
         if (!isOnline()) {
-            return;
+            const recovered = await checkNow();
+            if (!recovered) {
+                showToast('No internet yet. Work stays on this PC until you upload.');
+                return;
+            }
         }
         try {
             await syncNow();
@@ -141,8 +219,20 @@ function bindPillClick(id) {
 
 export async function mountOfflineBanner() {
     removeLegacyBanner();
+    ensureUploadButton(
+        'ftpos-pending-sync',
+        'ftpos-upload-cloud',
+        'rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap bg-orange-500 text-white hover:bg-orange-600'
+    );
+    ensureUploadButton(
+        'pos-pending-sync',
+        'pos-upload-cloud',
+        'rounded-md px-3 py-1 text-sm font-semibold whitespace-nowrap bg-orange-500 text-white hover:bg-orange-600 border-2 border-white/20'
+    );
     bindPillClick('ftpos-connectivity-status');
     bindPillClick('pos-connectivity-status');
+    bindUploadClick('ftpos-upload-cloud');
+    bindUploadClick('pos-upload-cloud');
     await renderStatusPills();
 
     onConnectivityChange(async (status) => {
@@ -186,6 +276,8 @@ export async function mountOfflineBanner() {
     setTimeout(() => {
         bindPillClick('ftpos-connectivity-status');
         bindPillClick('pos-connectivity-status');
+        bindUploadClick('ftpos-upload-cloud');
+        bindUploadClick('pos-upload-cloud');
         renderStatusPills();
     }, 800);
 }

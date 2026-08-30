@@ -43,6 +43,10 @@ class ProductPolicy
 
     public function delete(User $user, Product $product): bool
     {
+        if (! $user->isAdmin() && $product->isPhanduCatalog()) {
+            return false;
+        }
+
         if ($user->isAdmin()) {
             return CurrentBranch::id($user) !== null;
         }

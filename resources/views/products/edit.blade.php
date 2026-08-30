@@ -153,18 +153,25 @@
                     @enderror
                 </div>
 
-                <!-- Quantity -->
+                <!-- Current stock (do not type a new total here — add received qty below) -->
                 <div>
-                    <label for="stock_quantity" class="block text-sm font-medium text-gray-700 mb-2">
-                        Quantity
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        Current stock
                     </label>
-                    <input type="number" 
-                           id="stock_quantity" 
-                           name="stock_quantity" 
-                           value="{{ old('stock_quantity', $product->stock_quantity) }}" 
-                           min="0"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
-                           placeholder="Enter quantity">
+                    <input type="hidden" id="stock_quantity" name="stock_quantity" value="{{ old('stock_quantity', $product->stock_quantity) }}">
+                    <div class="w-full px-4 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-900">
+                        {{ number_format((float) $product->stock_quantity, 2) }} {{ $baseUnitLabel ?? ($product->unit->short_name ?? '') }}
+                        @if(isset($receiveUnits) && $receiveUnits->count() > 1)
+                            @foreach($receiveUnits as $receiveUnit)
+                                @if((int) $receiveUnit['id'] !== (int) ($baseUnitId ?? $product->base_unit_id) && (float) $receiveUnit['units_per_base'] > 0)
+                                    <span class="text-sm text-gray-500">
+                                        · {{ number_format((float) $product->stock_quantity * (float) $receiveUnit['units_per_base'], 2) }} {{ $receiveUnit['short_name'] }}
+                                    </span>
+                                @endif
+                            @endforeach
+                        @endif
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500">To add more stock at the same price, use Add received stock below. Do not overwrite this total.</p>
                     @error('stock_quantity')
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
@@ -232,6 +239,110 @@
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
                 </div>
+            </div>
+
+            <!-- Add received stock -->
+            <div class="mt-6 p-4 border border-orange-200 rounded-lg bg-orange-50">
+                <h4 class="text-sm font-semibold text-gray-900 mb-1">Add received stock</h4>
+                <p class="text-xs text-gray-600 mb-4">
+                    Got extra at the same purchase rate? Add it here. 1 more bag adds 1 bag; 2 kg extra converts into bags using your unit conversion.
+                </p>
+
+                @if(isset($stockLots) && $stockLots->isNotEmpty())
+                    <div class="mb-4 overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-gray-600">
+                                    <th class="py-1 pr-4 font-medium">Purchase rate</th>
+                                    <th class="py-1 pr-4 font-medium">Remaining</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($stockLots as $lot)
+                                    <tr class="text-gray-900">
+                                        <td class="py-1 pr-4">PKR {{ number_format((float) $lot->purchase_price, 2) }}</td>
+                                        <td class="py-1 pr-4">
+                                            {{ number_format((float) $lot->quantity, 2) }} {{ $baseUnitLabel ?? '' }}
+                                            @if(isset($receiveUnits))
+                                                @foreach($receiveUnits as $receiveUnit)
+                                                    @if((int) $receiveUnit['id'] !== (int) ($baseUnitId ?? 0) && (float) $receiveUnit['units_per_base'] > 0)
+                                                        <span class="text-gray-500">({{ number_format((float) $lot->quantity * (float) $receiveUnit['units_per_base'], 2) }} {{ $receiveUnit['short_name'] }})</span>
+                                                    @endif
+                                                @endforeach
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label for="add_lot_id" class="block text-sm font-medium text-gray-700 mb-2">Add to lot</label>
+                        <select id="add_lot_id"
+                                name="add_lot_id"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-md bg-white focus:ring-orange-500 focus:border-orange-500">
+                            @if(!isset($stockLots) || $stockLots->isEmpty())
+                                <option value="">Current stock (same price)</option>
+                            @elseif($stockLots->count() === 1)
+                                @php $onlyLot = $stockLots->first(); @endphp
+                                <option value="{{ $onlyLot->id }}" selected>
+                                    Rate PKR {{ number_format((float) $onlyLot->purchase_price, 2) }} · {{ number_format((float) $onlyLot->quantity, 2) }} {{ $baseUnitLabel ?? '' }}
+                                </option>
+                            @else
+                                <option value="">Select lot</option>
+                                @foreach($stockLots as $lot)
+                                    <option value="{{ $lot->id }}" {{ (string) old('add_lot_id') === (string) $lot->id ? 'selected' : '' }}>
+                                        Rate PKR {{ number_format((float) $lot->purchase_price, 2) }} · {{ number_format((float) $lot->quantity, 2) }} {{ $baseUnitLabel ?? '' }}
+                                    </option>
+                                @endforeach
+                            @endif
+                        </select>
+                        @error('add_lot_id')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="add_received_qty" class="block text-sm font-medium text-gray-700 mb-2">Quantity received</label>
+                        <input type="number"
+                               id="add_received_qty"
+                               name="add_received_qty"
+                               value="{{ old('add_received_qty') }}"
+                               min="0"
+                               step="any"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-md bg-white focus:ring-orange-500 focus:border-orange-500"
+                               placeholder="e.g. 1 bag or 2 kg">
+                        @error('add_received_qty')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="add_received_unit_id" class="block text-sm font-medium text-gray-700 mb-2">Unit</label>
+                        <select id="add_received_unit_id"
+                                name="add_received_unit_id"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-md bg-white focus:ring-orange-500 focus:border-orange-500">
+                            @foreach(($receiveUnits ?? collect()) as $receiveUnit)
+                                <option value="{{ $receiveUnit['id'] }}"
+                                        data-units-per-base="{{ $receiveUnit['units_per_base'] }}"
+                                        data-short-name="{{ $receiveUnit['short_name'] }}"
+                                        {{ (string) old('add_received_unit_id', $baseUnitId ?? $product->base_unit_id) === (string) $receiveUnit['id'] ? 'selected' : '' }}>
+                                    {{ $receiveUnit['name'] }} ({{ $receiveUnit['short_name'] }})
+                                </option>
+                            @endforeach
+                            @if(($receiveUnits ?? collect())->isEmpty() && $product->unit)
+                                <option value="{{ $product->unit_id }}" selected data-units-per-base="1" data-short-name="{{ $product->unit->short_name }}">
+                                    {{ $product->unit->name }} ({{ $product->unit->short_name }})
+                                </option>
+                            @endif
+                        </select>
+                        @error('add_received_unit_id')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+                <p id="add-received-preview" class="mt-3 text-sm text-orange-800 font-medium" data-base-unit="{{ $baseUnitLabel ?? '' }}"></p>
             </div>
 
             <!-- Description -->
@@ -1733,6 +1844,43 @@
                 }
             });
         }
+
+        function updateAddReceivedPreview() {
+            const qtyEl = document.getElementById('add_received_qty');
+            const unitEl = document.getElementById('add_received_unit_id');
+            const preview = document.getElementById('add-received-preview');
+            if (!qtyEl || !unitEl || !preview) {
+                return;
+            }
+            const qty = parseFloat(qtyEl.value || '0');
+            const opt = unitEl.options[unitEl.selectedIndex];
+            if (!opt || !(qty > 0)) {
+                preview.textContent = '';
+                return;
+            }
+            const perBase = parseFloat(opt.getAttribute('data-units-per-base') || '0');
+            const unitName = opt.getAttribute('data-short-name') || opt.text;
+            const baseName = preview.getAttribute('data-base-unit') || '';
+            if (!perBase) {
+                preview.textContent = 'No conversion is set for this unit.';
+                return;
+            }
+            const inBase = qty / perBase;
+            const rounded = (Math.round(inBase * 1000000) / 1000000).toString();
+            preview.textContent = 'Adds ' + qty + ' ' + unitName + ' = ' + rounded + ' ' + baseName + ' to the selected stock lot.';
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const qtyEl = document.getElementById('add_received_qty');
+            const unitEl = document.getElementById('add_received_unit_id');
+            if (qtyEl) {
+                qtyEl.addEventListener('input', updateAddReceivedPreview);
+            }
+            if (unitEl) {
+                unitEl.addEventListener('change', updateAddReceivedPreview);
+            }
+            updateAddReceivedPreview();
+        });
     </script>
 </x-app-layout>
 

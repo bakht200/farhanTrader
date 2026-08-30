@@ -201,11 +201,17 @@ class SaleController extends Controller
             $sale->load('items.product');
             foreach ($sale->items as $item) {
                 if ($item->product_id && $item->product) {
-                    $item->product->incrementStock($item->baseQuantity(), null, [
+                    $qty = $item->baseQuantity();
+                    $item->product->incrementStock($qty, null, [
                         'source_type' => 'sale',
                         'source_id' => $sale->id,
                         'reason' => 'sale deleted',
                     ]);
+                    app(\App\Services\ProductLotService::class)->restoreForSale(
+                        $item->product,
+                        (float) $qty,
+                        $item->product_lot_id ? (int) $item->product_lot_id : null
+                    );
                 }
             }
             $sale->delete();

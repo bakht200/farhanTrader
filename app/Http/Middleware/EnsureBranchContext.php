@@ -17,6 +17,7 @@ class EnsureBranchContext
         'logout',
         'profile.update',
         'profile.destroy',
+        'sync.enroll-vault',
     ];
 
     public function handle(Request $request, Closure $next): Response

@@ -183,6 +183,7 @@
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Product Name</th>
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Quantity</th>
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Unit Price</th>
+                                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Extra</th>
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Discount %</th>
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Tax</th>
                                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase">Total</th>
@@ -229,6 +230,7 @@
                     'product_sku' => $item->product_sku,
                     'quantity' => $item->quantity,
                     'unit_price' => $item->unit_price,
+                    'extra_price' => $item->product?->extra_price ?? 0,
                     'discount' => $item->discount,
                     'tax' => $item->tax,
                     'total' => $item->total,
@@ -331,6 +333,15 @@
                            step="0.01"
                            required
                            onchange="calculateRowTotal(${productRowIndex})">
+                </td>
+                <td class="px-3 py-2">
+                    <input type="number"
+                           name="products[${productRowIndex}][extra_price]"
+                           class="extra-price-input w-full px-3 py-1 border border-gray-300 rounded text-sm"
+                           value="${item && item.extra_price != null ? item.extra_price : (product && product.extra_price ? product.extra_price : '0.00')}"
+                           min="0"
+                           step="0.01"
+                           placeholder="Extra">
                 </td>
                 <td class="px-3 py-2">
                     <input type="number" 

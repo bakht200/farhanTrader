@@ -92,6 +92,15 @@
                         </svg>
                         Detailed Report
                     </button>
+                    <form method="POST" action="{{ route('suppliers.anonymous') }}" class="inline">
+                        @csrf
+                        <button type="submit" class="bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded-md font-medium inline-flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                            </svg>
+                            Anonymous
+                        </button>
+                    </form>
                     <a href="{{ route('suppliers.create') }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md font-medium inline-flex items-center">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -154,6 +163,9 @@
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="text-sm text-gray-900">{{ $supplier->name }}</span>
+                            @if($supplier->is_anonymous)
+                                <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-700">Cash</span>
+                            @endif
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap">
                             <span class="text-sm font-medium text-green-600">PKR {{ number_format($supplier->total_paid ?? 0, 2) }}</span>
@@ -189,6 +201,7 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
                                     </svg>
                                 </button>
+                                @unless($supplier->is_anonymous)
                                 <form action="{{ route('suppliers.destroy', $supplier) }}" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this supplier?');">
                                     @csrf
                                     @method('DELETE')
@@ -198,6 +211,7 @@
                                         </svg>
                                     </button>
                                 </form>
+                                @endunless
                             </div>
                         </td>
                     </tr>
@@ -362,16 +376,26 @@
                 return;
             }
 
-            tbody.innerHTML = rows.map((s) => {
-                const idLabel = escapeHtml(s.supplier_id || (typeof s.id === 'number' ? ('SN-' + String(s.id).padStart(3, '0')) : 'Pending sync'));
-                const paid = Number(s.total_paid || 0);
-                const remaining = Number(s.remaining || 0);
-                const unpaid = remaining > 0 || !!s.hasUnpaid;
+            tbody.innerHTML = await Promise.all(rows.map(async (s) => {
+                let paid = Number(s.total_paid || 0);
+                let remaining = Number(s.remaining || 0);
+                if (window.FTOffline.supplierWallet) {
+                    const w = await window.FTOffline.supplierWallet(s.id);
+                    paid = w.total_paid;
+                    remaining = w.remaining;
+                } else if (window.FTOffline.db.supplierTransactions) {
+                    const txs = (await window.FTOffline.db.supplierTransactions.toArray()).filter((t) => String(t.supplier_id) === String(s.id));
+                    paid = txs.filter((t) => t.type === 'debit').reduce((n, t) => n + Number(t.amount || 0), 0);
+                    const credit = txs.filter((t) => t.type === 'credit').reduce((n, t) => n + Number(t.amount || 0), 0);
+                    remaining = credit - paid;
+                }
+                const unpaid = remaining > 0.009;
                 const isLocal = String(s.id).startsWith('local-') || s.sync_status === 'pending';
-                const viewHref = isLocal ? '#' : `/suppliers/${s.id}`;
+                const viewHref = `/suppliers/${s.id}`;
                 const statusBadge = unpaid
                     ? `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"><span class="w-1.5 h-1.5 mr-1.5 bg-red-500 rounded-full"></span>Unpaid</span>`
                     : `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><span class="w-1.5 h-1.5 mr-1.5 bg-green-500 rounded-full"></span>Paid</span>`;
+                const idLabel = escapeHtml(s.supplier_id || (typeof s.id === 'number' ? ('SN-' + String(s.id).padStart(3, '0')) : 'Pending sync'));
 
                 return `<tr class="hover:bg-gray-50">
                     <td class="px-6 py-4 whitespace-nowrap">
@@ -384,11 +408,11 @@
                     <td class="px-6 py-4 whitespace-nowrap">${statusBadge}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div class="flex items-center space-x-3">
-                            <a href="${viewHref}" class="text-blue-600 hover:text-blue-900 offline-needs-net" title="${isLocal ? 'Sync first' : 'View (needs internet for details)'}">View</a>
+                            <a href="${viewHref}" class="text-blue-600 hover:text-blue-900" title="View bills and payments">View</a>
                         </div>
                     </td>
                 </tr>`;
-            }).join('');
+            })).then((html) => html.join(''));
 
             // Totals offline are limited (transactions not cached) — show counts at least
             const totalEl = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-4 .text-2xl.font-bold.text-gray-900.mt-2');
@@ -405,28 +429,13 @@
                 return;
             }
 
-            // Bills/reports need live server data
             document.querySelectorAll('button[onclick*="printAllSuppliersReport"], button[onclick*="printSupplierReport"]').forEach((btn) => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    alert('Supplier reports need an internet connection.');
+                    alert('Supplier PDF reports need an internet connection. Open View to see bills and payments on this device.');
                 }, true);
             });
-
-            document.addEventListener('click', (e) => {
-                const a = e.target.closest('a.offline-needs-net, a[href*="/suppliers/"]');
-                if (!a) return;
-                const href = a.getAttribute('href') || '';
-                if (href.includes('/create')) return;
-                if (href === '#' || href.includes('/suppliers/')) {
-                    // Detail/edit/delete need server
-                    if (!window.FTOffline.isOnline()) {
-                        e.preventDefault();
-                        alert('Supplier details, bills, and payments need an internet connection. List and create work offline.');
-                    }
-                }
-            }, true);
 
             await hydrateSuppliersFromOffline();
         }

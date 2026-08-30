@@ -1,15 +1,14 @@
 import { broadcast } from './broadcast';
 
 const PROBE_URL = '/up';
-const PROBE_TIMEOUT_MS = 2000;
-const SLOW_MS = 800;
+const PROBE_TIMEOUT_MS = 4000;
 const HEARTBEAT_ONLINE_MS = 20000;
 const HEARTBEAT_OFFLINE_MS = 4000;
 const STABLE_HITS_NEEDED = 3;
 const MIN_OFFLINE_MS = 5000;
 
 /** @type {'offline' | 'online'} */
-let status = 'offline';
+let status = typeof navigator !== 'undefined' && navigator.onLine !== false ? 'online' : 'offline';
 let consecutiveFastHits = 0;
 let requireStableRecovery = false;
 let probing = false;
@@ -74,22 +73,8 @@ function browserReportsOnline() {
 }
 
 function browserLooksSlow() {
-    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (!c) {
-        return false;
-    }
-    if (c.saveData) {
-        return true;
-    }
-    if (c.effectiveType === 'slow-2g' || c.effectiveType === '2g') {
-        return true;
-    }
-    if (typeof c.rtt === 'number' && c.rtt > 750) {
-        return true;
-    }
-    if (typeof c.downlink === 'number' && c.downlink > 0 && c.downlink < 0.4) {
-        return true;
-    }
+    // Chrome's Network Information API often reports 2g/saveData on usable Wi‑Fi.
+    // Do not treat that as offline — /up probe timing is the real signal.
     return false;
 }
 
@@ -111,9 +96,9 @@ async function probe() {
         });
         const ms = performance.now() - started;
         const ok = res.ok && browserReportsOnline();
-        return { ok, ms, slow: !ok || ms > SLOW_MS || browserLooksSlow() };
+        return { ok, ms };
     } catch {
-        return { ok: false, ms: performance.now() - started, slow: true };
+        return { ok: false, ms: performance.now() - started };
     } finally {
         clearTimeout(timer);
     }
@@ -129,7 +114,7 @@ async function evaluate({ instant = false } = {}) {
     }
     probing = true;
     try {
-        if (!browserReportsOnline() || browserLooksSlow()) {
+        if (!browserReportsOnline()) {
             consecutiveFastHits = 0;
             requireStableRecovery = true;
             emit('offline');
@@ -137,7 +122,7 @@ async function evaluate({ instant = false } = {}) {
         }
 
         const result = await probe();
-        if (!result.ok || result.slow) {
+        if (!result.ok) {
             consecutiveFastHits = 0;
             requireStableRecovery = true;
             emit('offline');
@@ -187,8 +172,9 @@ function restartHeartbeat() {
 }
 
 export async function startConnectivityMonitor() {
-    // Use cached pages until a fast probe proves the network is usable.
-    notifyServiceWorker(false);
+    // If the browser already reports a link, do not force cache-first POS/HTML.
+    // Probe still confirms whether the shop API is reachable.
+    notifyServiceWorker(browserReportsOnline());
 
     window.addEventListener('online', () => scheduleBackgroundCheck(400));
     window.addEventListener('offline', () => setOfflineImmediate());
@@ -208,7 +194,7 @@ export async function startConnectivityMonitor() {
         }
     });
 
-    await evaluate({ instant: true });
+    evaluate({ instant: true }).catch(() => {});
     restartHeartbeat();
 
     return () => {

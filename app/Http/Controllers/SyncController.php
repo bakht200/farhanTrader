@@ -10,10 +10,14 @@ use App\Models\Expense;
 use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductLot;
 use App\Models\ProductUnit;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\Supplier;
+use App\Models\SupplierBill;
+use App\Models\SupplierBillItem;
+use App\Models\SupplierTransaction;
 use App\Models\Unit;
 use App\Models\UnitConversion;
 use App\Models\User;
@@ -89,7 +93,7 @@ class SyncController extends Controller
             'full' => false,
             'server_time' => now()->toIso8601String(),
             'active_branch_id' => $branchId,
-            'cache_version' => 2,
+            'cache_version' => 4,
             'user' => $this->userPayload($user),
             'products' => $this->productsForBranch($branchId, $sinceAt),
             'categories' => Category::query()->where('updated_at', '>', $sinceAt)->get(),
@@ -123,8 +127,11 @@ class SyncController extends Controller
                     'selling_price' => $row->selling_price,
                     'retail_price' => $row->retail_price,
                     'wholesale_price' => $row->wholesale_price,
+                    'extra_price' => $row->extra_price,
                     'updated_at' => $row->updated_at,
                 ]),
+            'product_lots' => $this->productLotsForBranch($branchId, $sinceAt),
+            ...$this->supplierLedgerSnapshot($sinceAt),
             'deleted' => new \stdClass(),
         ];
 
@@ -209,6 +216,8 @@ class SyncController extends Controller
                     'customer' => $this->pushCustomer($user, $item, $uuid),
                     'expense' => $this->pushExpense($user, $item, $uuid),
                     'supplier' => $this->pushSupplier($user, $item, $uuid),
+                    'supplier_bill' => $this->pushSupplierBill($user, $item, $uuid),
+                    'supplier_payment' => $this->pushSupplierPayment($user, $item, $uuid),
                     'sale' => $this->pushSale($user, $item, $uuid),
                     default => [
                         'client_uuid' => $uuid,
@@ -313,6 +322,131 @@ class SyncController extends Controller
         ];
     }
 
+    protected function resolveMappedServerId($raw, string $entity): ?int
+    {
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (is_numeric($raw)) {
+            return (int) $raw;
+        }
+        $uuid = is_string($raw) && str_starts_with($raw, 'local-')
+            ? substr($raw, 6)
+            : (string) $raw;
+        if (! Schema::hasTable('sync_id_mappings')) {
+            return null;
+        }
+        $row = DB::table('sync_id_mappings')
+            ->where('client_uuid', $uuid)
+            ->where('entity', $entity)
+            ->first();
+
+        return $row ? (int) $row->server_id : null;
+    }
+
+    protected function pushSupplierBill(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $branchId = $this->resolvedBranchId($user, $item);
+        $supplierId = $this->resolveMappedServerId($payload['supplier_id'] ?? null, 'supplier')
+            ?? (is_numeric($payload['supplier_id'] ?? null) ? (int) $payload['supplier_id'] : null);
+        $supplier = $supplierId ? Supplier::query()->whereKey($supplierId)->first() : null;
+        if (! $supplier) {
+            throw new \RuntimeException('Supplier not found for offline bill.');
+        }
+
+        $billAmount = (float) ($payload['bill_amount'] ?? $payload['amount'] ?? 0);
+        if ($billAmount <= 0) {
+            throw new \RuntimeException('Bill amount is required.');
+        }
+
+        $bill = $supplier->bills()->create([
+            'branch_id' => $branchId,
+            'bill_number' => $payload['bill_number'] ?? null,
+            'bill_amount' => $billAmount,
+            'bill_date' => $payload['bill_date'] ?? $payload['transaction_date'] ?? now()->toDateString(),
+            'description' => $payload['description'] ?? null,
+            'reference_number' => $payload['reference_number'] ?? null,
+        ]);
+
+        $supplier->transactions()->create([
+            'branch_id' => $branchId,
+            'type' => 'credit',
+            'amount' => $billAmount,
+            'description' => $payload['description'] ?? ('Bill #'.($bill->bill_number ?: $bill->id)),
+            'transaction_date' => $payload['transaction_date'] ?? $bill->bill_date,
+            'reference_number' => $payload['reference_number'] ?? null,
+            'supplier_bill_id' => $bill->id,
+        ]);
+
+        $paid = (float) ($payload['paid_amount'] ?? 0);
+        if ($paid > 0) {
+            $supplier->transactions()->create([
+                'branch_id' => $branchId,
+                'type' => 'debit',
+                'amount' => min($paid, $billAmount),
+                'description' => $payload['payment_description'] ?? ('Payment for bill #'.($bill->bill_number ?: $bill->id)),
+                'transaction_date' => $payload['transaction_date'] ?? $bill->bill_date,
+                'reference_number' => $payload['reference_number'] ?? null,
+                'supplier_bill_id' => $bill->id,
+            ]);
+        }
+
+        $this->mapUuid($uuid, 'supplier_bill', $bill->id, [
+            'bill_number' => $bill->bill_number,
+        ], $branchId);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'supplier_bill',
+            'status' => 'ok',
+            'server_id' => $bill->id,
+            'bill_number' => $bill->bill_number,
+        ];
+    }
+
+    protected function pushSupplierPayment(User $user, array $item, string $uuid): array
+    {
+        $payload = $item['payload'];
+        $branchId = $this->resolvedBranchId($user, $item);
+        $supplierId = $this->resolveMappedServerId($payload['supplier_id'] ?? null, 'supplier')
+            ?? (is_numeric($payload['supplier_id'] ?? null) ? (int) $payload['supplier_id'] : null);
+        $supplier = $supplierId ? Supplier::query()->whereKey($supplierId)->first() : null;
+        if (! $supplier) {
+            throw new \RuntimeException('Supplier not found for offline payment.');
+        }
+
+        $amount = (float) ($payload['amount'] ?? 0);
+        if ($amount <= 0) {
+            throw new \RuntimeException('Payment amount is required.');
+        }
+
+        $billId = $this->resolveMappedServerId($payload['supplier_bill_id'] ?? null, 'supplier_bill');
+        if (! $billId && is_numeric($payload['supplier_bill_id'] ?? null)) {
+            $billId = (int) $payload['supplier_bill_id'];
+        }
+
+        $tx = $supplier->transactions()->create([
+            'branch_id' => $branchId,
+            'type' => 'debit',
+            'amount' => $amount,
+            'description' => $payload['description'] ?? 'Payment',
+            'transaction_date' => $payload['transaction_date'] ?? now()->toDateString(),
+            'reference_number' => $payload['reference_number'] ?? null,
+            'supplier_bill_id' => $billId,
+        ]);
+
+        $this->mapUuid($uuid, 'supplier_payment', $tx->id, [], $branchId);
+
+        return [
+            'client_uuid' => $uuid,
+            'entity' => 'supplier_payment',
+            'status' => 'ok',
+            'server_id' => $tx->id,
+            'supplier_bill_id' => $billId,
+        ];
+    }
+
     protected function pushSale(User $user, array $item, string $uuid): array
     {
         $payload = $item['payload'];
@@ -353,6 +487,7 @@ class SyncController extends Controller
             $qty = (float) ($line['quantity'] ?? 0);
             $qtyInBase = $qty;
             $product = null;
+            $lotId = ! empty($line['product_lot_id']) ? (int) $line['product_lot_id'] : null;
             if (! $isCustom && ! empty($line['product_id'])) {
                 $product = Product::query()->visibleToBranch($branchId)->find($line['product_id']);
                 if (! $product) {
@@ -360,7 +495,16 @@ class SyncController extends Controller
                 }
                 $unitId = ! empty($line['unit_id']) ? (int) $line['unit_id'] : null;
                 $qtyInBase = $conversion->toBaseQuantity($product, $qty, $unitId);
-                if ($qtyInBase > (float) ($product->currentStock($branchId) ?? 0) + 0.000001) {
+                $available = (float) ($product->currentStock($branchId) ?? 0);
+                if ($lotId) {
+                    $lotQty = (float) (ProductLot::query()
+                        ->where('id', $lotId)
+                        ->where('product_id', $product->id)
+                        ->where('branch_id', $branchId)
+                        ->value('quantity') ?? 0);
+                    $available = min($available, $lotQty);
+                }
+                if ($qtyInBase > $available + 0.000001) {
                     throw new \RuntimeException("Insufficient stock for {$product->name}");
                 }
             }
@@ -373,6 +517,7 @@ class SyncController extends Controller
                 'price' => (float) ($line['selling_price'] ?? 0),
                 'line_total' => $lineTotal,
                 'product' => $product,
+                'lot_id' => $lotId,
             ];
         }
 
@@ -420,6 +565,7 @@ class SyncController extends Controller
                 'sale_id' => $sale->id,
                 'branch_id' => $branchId,
                 'product_id' => $isCustom ? null : ($line['product_id'] ?? null),
+                'product_lot_id' => $row['lot_id'] ?: null,
                 'product_name' => $productName,
                 'quantity' => $qty,
                 'quantity_in_base_unit' => $row['qty_in_base'],
@@ -434,8 +580,14 @@ class SyncController extends Controller
                     'source_type' => 'sale',
                     'source_id' => $sale->id,
                     'reason' => 'offline sync sale',
-                    'idempotency_key' => 'sync-sale-'.$uuid.'-'.$product->id,
+                    'idempotency_key' => 'sync-sale-'.$uuid.'-'.$product->id.($row['lot_id'] ? '-lot-'.$row['lot_id'] : ''),
                 ]);
+                app(\App\Services\ProductLotService::class)->decrementForSale(
+                    $product,
+                    (float) $row['qty_in_base'],
+                    $row['lot_id'] ?: null,
+                    $branchId
+                );
             }
         }
 
@@ -481,7 +633,7 @@ class SyncController extends Controller
             'full' => true,
             'server_time' => now()->toIso8601String(),
             'active_branch_id' => $branchId,
-            'cache_version' => 2,
+            'cache_version' => 4,
             'user' => $this->userPayload($user),
             'products' => $this->productsForBranch($branchId),
             'categories' => Category::query()->orderBy('name')->get(),
@@ -512,8 +664,35 @@ class SyncController extends Controller
                     'selling_price' => $row->selling_price,
                     'retail_price' => $row->retail_price,
                     'wholesale_price' => $row->wholesale_price,
+                    'extra_price' => $row->extra_price,
                     'updated_at' => $row->updated_at,
                 ]),
+            'product_lots' => $this->productLotsForBranch($branchId),
+            ...$this->supplierLedgerSnapshot(),
+        ];
+    }
+
+    protected function supplierLedgerSnapshot($sinceAt = null): array
+    {
+        $billsQuery = SupplierBill::query()->orderByDesc('id')->limit(3000);
+        $txsQuery = SupplierTransaction::query()->orderByDesc('id')->limit(8000);
+        if ($sinceAt) {
+            $billsQuery->where('updated_at', '>', $sinceAt);
+            $txsQuery->where('updated_at', '>', $sinceAt);
+        }
+        $bills = $billsQuery->get();
+        $itemsQuery = SupplierBillItem::query()
+            ->whereIn('supplier_bill_id', SupplierBill::query()->select('id'))
+            ->orderByDesc('id')
+            ->limit(12000);
+        if ($sinceAt) {
+            $itemsQuery->where('updated_at', '>', $sinceAt);
+        }
+
+        return [
+            'supplier_bills' => $bills,
+            'supplier_bill_items' => $itemsQuery->get(),
+            'supplier_transactions' => $txsQuery->get(),
         ];
     }
 
@@ -553,6 +732,11 @@ class SyncController extends Controller
                 'selling_price' => $branchStock?->selling_price ?? ($attrs['selling_price'] ?? null),
                 'retail_price' => $branchStock?->retail_price ?? ($attrs['retail_price'] ?? null),
                 'wholesale_price' => $branchStock?->wholesale_price ?? ($attrs['wholesale_price'] ?? null),
+                'extra_price' => (
+                    $branchStock?->extra_price !== null
+                    && $branchStock->extra_price !== ''
+                    && (float) $branchStock->extra_price != 0.0
+                ) ? (float) $branchStock->extra_price : (float) ($attrs['extra_price'] ?? 0),
                 'stock_quantity' => (float) ($branchStock?->stock_quantity ?? 0),
                 'selling_type' => $branchStock?->selling_type
                     ?: ($attrs['selling_type'] ?? 'retail'),
@@ -564,19 +748,26 @@ class SyncController extends Controller
         });
     }
 
+    /**
+     * @return \Illuminate\Support\Collection<int, ProductLot>
+     */
+    protected function productLotsForBranch(?int $branchId, $sinceAt = null)
+    {
+        if (! $branchId) {
+            return collect();
+        }
+
+        $query = ProductLot::query()->where('branch_id', $branchId);
+        if ($sinceAt) {
+            $query->where('updated_at', '>', $sinceAt);
+        }
+
+        return $query->orderBy('product_id')->orderBy('id')->get();
+    }
+
     protected function snapshotBranchId(User $user): ?int
     {
-        $branchId = CurrentBranch::id($user);
-        if ($branchId) {
-            return $branchId;
-        }
-
-        // Admin with no switcher selection still needs a Phandu catalog for offline POS.
-        if ($user->isAdmin()) {
-            return CurrentBranch::DEFAULT_BRANCH_ID;
-        }
-
-        return null;
+        return CurrentBranch::id($user);
     }
 
     protected function userPayload(User $user): array

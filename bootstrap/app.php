@@ -44,7 +44,11 @@ return Application::configure(basePath: dirname(__DIR__))
             abort(403, $e->getMessage());
         });
 
-        $exceptions->render(function (\Illuminate\Session\TokenMismatchException $e, $request) {
+        $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\HttpException $e, $request) {
+            if ($e->getStatusCode() !== 419) {
+                return null;
+            }
+
             if ($request->hasSession()) {
                 \Illuminate\Support\Facades\Auth::guard('web')->logout();
                 $request->session()->invalidate();
@@ -59,7 +63,20 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 419);
             }
 
-            return redirect()->route('login')
-                ->with('error', 'Your session expired. Please log in again.');
+            return redirect()->route('login', ['expired' => 1])
+                ->with('error', 'Your session expired. Please sign in again.');
+        });
+
+        $exceptions->respond(function ($response, $e, $request) {
+            if ($response->getStatusCode() !== 419) {
+                return $response;
+            }
+
+            if ($request->expectsJson() || $request->ajax()) {
+                return $response;
+            }
+
+            return redirect()->route('login', ['expired' => 1])
+                ->with('error', 'Your session expired. Please sign in again.');
         });
     })->create();

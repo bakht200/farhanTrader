@@ -28,6 +28,12 @@ Route::get('/', function () {
     return redirect()->route('dashboard');
 });
 
+Route::get('/csrf-token', function () {
+    return response()
+        ->json(['token' => csrf_token()])
+        ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+})->name('csrf.token');
+
 Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified', 'branch.context'])->name('dashboard');
 
 Route::middleware(['auth', 'branch.context'])->group(function () {
@@ -71,6 +77,7 @@ Route::middleware(['auth', 'branch.context'])->group(function () {
 
     // Suppliers routes - specific routes before resource route
     Route::get('suppliers/print-all-report', [SupplierController::class, 'printAllSuppliersReport'])->name('suppliers.print.all.report');
+    Route::match(['get', 'post'], 'suppliers/anonymous-purchase', [SupplierController::class, 'anonymousPurchase'])->name('suppliers.anonymous');
     Route::get('suppliers/{supplier}/transactions/create', [SupplierController::class, 'createTransaction'])->name('suppliers.transactions.create');
     Route::post('suppliers/{supplier}/transactions', [SupplierController::class, 'storeTransaction'])->name('suppliers.transactions.store');
     Route::get('suppliers/{supplier}/transactions/{transaction}/edit', [SupplierController::class, 'editTransaction'])->name('suppliers.transactions.edit');

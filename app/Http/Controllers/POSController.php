@@ -43,9 +43,11 @@ class POSController extends Controller
             $units = Unit::where('is_active', true)->get();
             $editOrderData = null;
             $editOrderId = $request->get('edit_order_id');
+            $posCards = collect();
 
             return view('pos.index', compact(
                 'products',
+                'posCards',
                 'categories',
                 'customers',
                 'customerTypesForPos',
@@ -59,7 +61,7 @@ class POSController extends Controller
 
         $query = Product::where('is_active', true)
             ->visibleToBranch($branchId)
-            ->with(['category', 'unit', 'productUnits.unit', 'currentBranchStock']);
+            ->with(['category', 'unit', 'baseUnit', 'productUnits.unit', 'currentBranchStock']);
 
         // Category filter
         if ($categoryId !== 'all') {
@@ -76,6 +78,7 @@ class POSController extends Controller
         }
 
         $products = $query->get();
+        $posCards = app(\App\Services\ProductLotService::class)->posCards($products, $branchId);
         $categories = Category::where('is_active', true)->withCount('products')->get();
         $customers = Customer::where('is_active', true)->get();
         $customerTypesForPos = Customer::where('is_active', true)
@@ -146,7 +149,7 @@ class POSController extends Controller
                 ];
         }
 
-        return view('pos.index', compact('products', 'categories', 'customers', 'customerTypesForPos', 'units', 'categoryId', 'search', 'editOrderData', 'editOrderId'));
+        return view('pos.index', compact('products', 'posCards', 'categories', 'customers', 'customerTypesForPos', 'units', 'categoryId', 'search', 'editOrderData', 'editOrderId'));
     }
 
     public function process(Request $request)
@@ -241,6 +244,14 @@ class POSController extends Controller
                     return redirect()->back()->with('error', $e->getMessage());
                 }
                 $availableInBaseUnit = (float) ($product->stock_quantity ?? 0);
+                $lotId = ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null;
+                if ($lotId) {
+                    $lotQty = (float) (\App\Models\ProductLot::query()
+                        ->where('id', $lotId)
+                        ->where('product_id', $product->id)
+                        ->value('quantity') ?? 0);
+                    $availableInBaseUnit = min($availableInBaseUnit, $lotQty);
+                }
 
                 if ($requestedInBaseUnit > $availableInBaseUnit + 0.000001) {
                     $baseUnitName = $product->baseUnit->short_name ?? $product->unit->short_name ?? 'base unit';
@@ -336,13 +347,17 @@ class POSController extends Controller
                 // Restore stock for all existing items
                 foreach ($sale->items as $oldItem) {
                     if ($oldItem->product_id && $oldItem->product) {
-                        // Use quantity_in_base_unit if available, otherwise use quantity
                         $quantityToRestore = $oldItem->quantity_in_base_unit ?? $oldItem->quantity;
                         $oldItem->product->incrementStock($quantityToRestore, null, [
                             'source_type' => 'sale',
                             'source_id' => $sale->id,
                             'reason' => 'POS edit restore',
                         ]);
+                        app(\App\Services\ProductLotService::class)->restoreForSale(
+                            $oldItem->product,
+                            (float) $quantityToRestore,
+                            $oldItem->product_lot_id ? (int) $oldItem->product_lot_id : null
+                        );
                     }
                 }
                 
@@ -455,6 +470,7 @@ class POSController extends Controller
                 SaleItem::create([
                     'sale_id' => $sale->id,
                     'product_id' => $item['product_id'],
+                    'product_lot_id' => ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null,
                     'quantity' => $item['quantity'],
                     'unit_id' => $unitId,
                     'quantity_in_base_unit' => $quantityInBaseUnit,
@@ -470,6 +486,11 @@ class POSController extends Controller
                     'source_id' => $sale->id,
                     'reason' => 'POS sale',
                 ]);
+                app(\App\Services\ProductLotService::class)->decrementForSale(
+                    $product,
+                    (float) $quantityInBaseUnit,
+                    ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null
+                );
 
                 if (! isset($stockChangeTracker[$product->id])) {
                     $stockChangeTracker[$product->id] = [
@@ -827,6 +848,7 @@ class POSController extends Controller
                     SaleItem::create([
                         'sale_id' => $sale->id,
                         'product_id' => $item['product_id'],
+                        'product_lot_id' => ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null,
                         'quantity' => $item['quantity'],
                         'unit_id' => $unitId,
                         'quantity_in_base_unit' => $quantityInBaseUnit,

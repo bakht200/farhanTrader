@@ -4,8 +4,10 @@
  */
 
 import { isOnline } from './connectivity';
+import { db } from './db';
 
-export const CACHE_NAME = 'ftpos-pages-v5';
+export const CACHE_NAME = 'ftpos-pages-v9';
+export const MAX_SUPPLIER_PREFETCH = 150;
 
 export const PRECACHE_ROUTES = [
     '/',
@@ -39,6 +41,7 @@ export const PRECACHE_ROUTES = [
     '/branches/receipt-settings/edit',
     '/offline.html',
     '/logo.png',
+    '/login',
 ];
 
 async function waitForServiceWorker() {
@@ -66,6 +69,7 @@ function collectNavUrls() {
                 || u.pathname.startsWith('/sync/')
                 || u.pathname === '/up'
                 || u.pathname.startsWith('/logout')
+                || u.pathname.includes('anonymous-purchase')
             ) {
                 return;
             }
@@ -84,6 +88,20 @@ function isLoginPath(pathname) {
     return p === '/login' || p.startsWith('/login/');
 }
 
+function isPosPath(pathname) {
+    const p = (pathname || '').replace(/\/+$/, '') || '/';
+    return p === '/sales/pos';
+}
+
+function posCatalogIsEmpty(buf) {
+    try {
+        const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+        return new TextDecoder().decode(slice).includes('data-ftpos-catalog="empty"');
+    } catch {
+        return false;
+    }
+}
+
 async function storePage(cache, path, res) {
     if (!res || !res.ok) {
         return false;
@@ -97,6 +115,9 @@ async function storePage(cache, path, res) {
         return false;
     }
     const buf = await res.clone().arrayBuffer();
+    if (isPosPath(path) && posCatalogIsEmpty(buf)) {
+        return false;
+    }
     const contentType = res.headers.get('Content-Type') || 'text/html; charset=UTF-8';
     const stored = new Response(buf, {
         status: 200,
@@ -114,6 +135,24 @@ async function storePage(cache, path, res) {
     return true;
 }
 
+async function collectSupplierPageUrls() {
+    try {
+        const suppliers = (await db.suppliers.toArray()).slice(0, MAX_SUPPLIER_PREFETCH);
+        const urls = [];
+        for (const supplier of suppliers) {
+            if (supplier?.id == null) {
+                continue;
+            }
+            const id = encodeURIComponent(supplier.id);
+            urls.push(`/suppliers/${id}`);
+            urls.push(`/suppliers/${id}/transactions/create`);
+        }
+        return urls;
+    } catch {
+        return [];
+    }
+}
+
 /**
  * Fetch each route while online (with cookies) and store in cache.
  */
@@ -122,17 +161,20 @@ export async function prefetchAppShells(urls) {
         return { ok: 0, failed: 0 };
     }
 
-    const list = urls && urls.length ? urls : collectNavUrls();
+    const extra = await collectSupplierPageUrls();
+    const list = [...new Set([...(urls && urls.length ? urls : collectNavUrls()), ...extra])];
     const worker = await waitForServiceWorker();
     if (worker) {
         worker.postMessage({ type: 'PRECACHE', urls: list });
+        // Service worker caches pages in the background so this tab stays responsive.
+        return { ok: list.length, failed: 0, total: list.length, delegated: true };
     }
 
     let ok = 0;
     let failed = 0;
     const cache = 'caches' in window ? await caches.open(CACHE_NAME) : null;
 
-    const batchSize = 3;
+    const batchSize = 1;
     for (let i = 0; i < list.length; i += batchSize) {
         if (!isOnline()) {
             break;
@@ -149,7 +191,11 @@ export async function prefetchAppShells(urls) {
                         headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
                     });
                     if (path === '/login' || isLoginPath(path)) {
-                        failed += 1;
+                        if (!cache || !(await storePage(cache, '/login', res))) {
+                            failed += 1;
+                            return;
+                        }
+                        ok += 1;
                         return;
                     }
                     if (!cache || !(await storePage(cache, path, res))) {

@@ -1,9 +1,9 @@
 <x-app-layout>
     <x-slot name="header">
-        Add Transaction
+        {{ $supplier->is_anonymous ? 'Cash purchase' : 'Add Transaction' }}
     </x-slot>
 
-    <div class="w-full max-w-none min-w-0 -mx-6 px-6 space-y-6">
+    <div class="w-full max-w-none min-w-0 -mx-6 px-6 space-y-6" data-ftpos-page="supplier-transaction-create" data-ftpos-supplier-id="{{ $supplier->id }}">
     <!-- Breadcrumb -->
     <nav class="flex flex-wrap items-center gap-2 text-sm text-gray-500" aria-label="Breadcrumb">
         <a href="{{ route('dashboard') }}" class="hover:text-orange-600 transition-colors">Dashboard</a>
@@ -12,7 +12,7 @@
         <svg class="w-4 h-4 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         <a href="{{ route('suppliers.show', $supplier) }}" class="hover:text-orange-600 transition-colors truncate max-w-[min(100%,16rem)] sm:max-w-md md:max-w-none" title="{{ $supplier->name }}">{{ $supplier->name }}</a>
         <svg class="w-4 h-4 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-        <span class="text-gray-900 font-medium">Add Transaction</span>
+        <span class="text-gray-900 font-medium">{{ $supplier->is_anonymous ? 'Cash purchase' : 'Add Transaction' }}</span>
     </nav>
 
     @if(session('success'))
@@ -30,7 +30,11 @@
                     <div class="bg-gradient-to-br from-orange-500 via-orange-500 to-amber-600 px-5 py-4 lg:py-5 lg:w-72 xl:w-80 shrink-0 lg:flex lg:flex-col lg:justify-center">
                         <p class="text-xs font-medium uppercase tracking-wider text-white/80">Supplier</p>
                         <h2 class="mt-1 text-lg font-semibold text-white leading-snug break-words">{{ $supplier->name }}</h2>
+                        @if($supplier->is_anonymous)
+                            <p class="mt-1 text-xs text-white/80">Cash purchase from a random person. Products are created new even if the name already exists.</p>
+                        @endif
                     </div>
+                    @unless($supplier->is_anonymous)
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 sm:p-5 flex-1 min-w-0">
                         <div class="rounded-xl bg-emerald-50/80 border border-emerald-100/80 px-4 py-3 min-w-0">
                             <p class="text-xs font-medium text-emerald-700/90 uppercase tracking-wide">Total paid</p>
@@ -47,6 +51,7 @@
                             </p>
                         </div>
                     </div>
+                    @endunless
                 </div>
             </div>
         </div>
@@ -55,13 +60,27 @@
         <div class="w-full min-w-0 flex-1">
             <div class="rounded-2xl border border-gray-200/80 bg-white shadow-sm overflow-hidden w-full min-w-0">
                 <div class="border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white px-5 sm:px-6 py-4">
-                    <h3 class="text-lg font-semibold text-gray-900">New transaction</h3>
-                    <p class="mt-0.5 text-sm text-gray-500">Record a credit (purchase owed) or debit (payment) for this supplier.</p>
+                    <h3 class="text-lg font-semibold text-gray-900">{{ $supplier->is_anonymous ? 'Cash purchase' : 'New transaction' }}</h3>
+                    <p class="mt-0.5 text-sm text-gray-500">
+                        @if($supplier->is_anonymous)
+                            Add the products you bought in cash. A new product is created even if the name already exists.
+                        @else
+                            Record a credit (purchase owed) or debit (payment) for this supplier.
+                        @endif
+                    </p>
                 </div>
                 <div class="p-5 sm:p-6 lg:p-8 w-full min-w-0">
                 <form method="POST" action="{{ route('suppliers.transactions.store', $supplier) }}" enctype="multipart/form-data" class="space-y-8" onsubmit="validateBillAmount()">
                     @csrf
 
+                    @if($supplier->is_anonymous)
+                        <input type="hidden" id="type" name="type" value="credit">
+                        <input type="hidden" id="create_bill" name="create_bill" value="1">
+                        <input type="hidden" id="transaction_date" name="transaction_date" value="{{ old('transaction_date', date('Y-m-d')) }}">
+                        <input type="hidden" id="paid_amount" name="paid_amount" value="{{ old('paid_amount', 0) }}">
+                    @endif
+
+                    @unless($supplier->is_anonymous)
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-4">Transaction details</p>
                         <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 md:gap-6">
@@ -173,6 +192,10 @@
                                            placeholder="0.00"
                                            onchange="validatePaidAmount()"
                                            oninput="validatePaidAmount()">
+                                    <label class="mt-2 flex items-start gap-2 cursor-pointer">
+                                        <input type="checkbox" id="paid_in_cash" class="mt-0.5 rounded border-gray-300 text-orange-600 focus:ring-orange-500" {{ !empty($supplier->is_anonymous) ? 'checked' : '' }} onchange="syncPaidInCash()">
+                                        <span class="text-xs text-gray-600">Paid in cash (fill paid amount with the bill total)</span>
+                                    </label>
                                     <p class="mt-1 text-xs text-gray-500">
                                         Enter amount if paying now (will create debit transaction)
                                         <span id="paid-amount-hint" class="text-orange-600 font-medium hidden"></span>
@@ -214,14 +237,21 @@
                             </div>
                         </div>
                     </div>
+                    @endunless
 
                         <!-- Line items: full width (outside grid) -->
-                        <div id="productsSectionDiv" class="hidden w-full min-w-0 max-w-none mt-6 lg:mt-8">
+                        <div id="productsSectionDiv" class="{{ $supplier->is_anonymous ? '' : 'hidden' }} w-full min-w-0 max-w-none {{ $supplier->is_anonymous ? '' : 'mt-6 lg:mt-8' }}">
                             <div class="w-full min-w-0 rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                                 <div class="flex w-full min-w-0 flex-col gap-3 border-b border-gray-100 bg-gray-50/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5 sm:py-3.5">
                                     <div class="min-w-0 flex-1">
-                                        <h4 class="text-sm font-semibold text-gray-900">Line items</h4>
-                                        <p class="text-xs text-gray-500 mt-0.5 max-w-none">Same product again merges quantity automatically.</p>
+                                        <h4 class="text-sm font-semibold text-gray-900">{{ $supplier->is_anonymous ? 'Product information' : 'Line items' }}</h4>
+                                        <p class="text-xs text-gray-500 mt-0.5 max-w-none">
+                                            @if($supplier->is_anonymous)
+                                                Name, unit, and prices. Use Unit Conversions the same way as Create Product: From Unit, To Unit, and Conversion Factor (1 from = factor × to).
+                                            @else
+                                                Same product at the same purchase rate adds to that stock. Tick <span class="font-medium text-gray-700">Create as new product</span> to keep a separate item even if the name matches (for example another Sugar at a different bag/kg rate).
+                                            @endif
+                                        </p>
                                     </div>
                                     <button type="button" onclick="addProductRow()" class="inline-flex w-full sm:w-auto shrink-0 items-center justify-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition">
                                         <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -232,7 +262,7 @@
                                 </div>
 
                                 <div id="productsTableWrapper" class="hidden w-full min-w-0 overflow-x-auto">
-                                    <table class="w-full min-w-[52rem] xl:min-w-0 divide-y divide-gray-100 text-sm">
+                                    <table class="w-full min-w-[58rem] xl:min-w-0 divide-y divide-gray-100 text-sm">
                                         <thead>
                                             <tr class="bg-gradient-to-r from-slate-50 to-gray-50">
                                                 <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Product</th>
@@ -242,6 +272,7 @@
                                                 <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Purchase</th>
                                                 <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600" id="retail_price_header" style="display: none;">Retail</th>
                                                 <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600" id="wholesale_price_header" style="display: none;">Wholesale</th>
+                                                <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Extra</th>
                                                 <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">Total</th>
                                                 <th class="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-600 w-12"></th>
                                             </tr>
@@ -263,6 +294,25 @@
                             </div>
                         </div>
 
+                    @if($supplier->is_anonymous)
+                    <div class="mt-6">
+                        <label for="amount" class="block text-sm font-medium text-gray-700 mb-1.5">
+                            Amount <span class="text-red-500" id="amount-required">*</span>
+                            <span class="text-xs font-normal text-gray-500" id="amount-hint">(From products)</span>
+                        </label>
+                        <div class="relative max-w-sm">
+                            <span class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-xs font-medium text-gray-400">PKR</span>
+                            <input type="number" id="amount" name="amount" step="0.01" min="0.01" required value="{{ old('amount') }}"
+                                   class="w-full pl-12 pr-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500/25 focus:border-orange-500 transition tabular-nums"
+                                   placeholder="0.00">
+                        </div>
+                        @error('amount')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    @endif
+
+                    @unless($supplier->is_anonymous)
                         <div class="mt-5 md:mt-6 w-full min-w-0">
                             <label for="reference_number" class="block text-sm font-medium text-gray-700 mb-1.5">
                                 Reference
@@ -275,26 +325,29 @@
                             @enderror
                         </div>
                     </div>
+                    @endunless
 
                     <div>
+                        @unless($supplier->is_anonymous)
                         <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-4">Notes</p>
+                        @endunless
                         <label for="description" class="block text-sm font-medium text-gray-700 mb-1.5">
                             Description
                         </label>
                         <textarea id="description" name="description" rows="4" 
                                   class="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500/25 focus:border-orange-500 transition resize-y min-h-[6rem]" 
-                                  placeholder="Optional details for this transaction">{{ old('description') }}</textarea>
+                                  placeholder="{{ $supplier->is_anonymous ? 'Optional note about this cash purchase' : 'Optional details for this transaction' }}">{{ old('description') }}</textarea>
                         @error('description')
                             <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                         @enderror
                     </div>
 
                     <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-6 border-t border-gray-100">
-                        <a href="{{ route('suppliers.show', $supplier) }}" class="inline-flex justify-center items-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-200 transition">
+                        <a href="{{ $supplier->is_anonymous ? route('suppliers.index') : route('suppliers.show', $supplier) }}" class="inline-flex justify-center items-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-200 transition">
                             Cancel
                         </a>
                         <button type="submit" class="inline-flex justify-center items-center rounded-lg bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition">
-                            Save transaction
+                            {{ $supplier->is_anonymous ? 'Save cash purchase' : 'Save transaction' }}
                         </button>
                     </div>
                 </form>
@@ -313,6 +366,7 @@
         const unitsData = @json(isset($units) ? $units->map(function($u) {
             return ['id' => $u->id, 'name' => $u->name, 'short_name' => $u->short_name];
         })->values() : []);
+        const forceNewProducts = @json((bool) ($forceNewProducts ?? false));
         
         let productRowIndex = 0;
 
@@ -320,6 +374,16 @@
         function buildUnitSelectOptionsHtml(selectedUnitId) {
             const want = selectedUnitId != null && selectedUnitId !== '' ? String(selectedUnitId) : '';
             let html = '<option value="">Select Unit</option>';
+            unitsData.forEach(u => {
+                const sel = want && String(u.id) === want ? ' selected' : '';
+                html += `<option value="${u.id}"${sel}>${u.name} (${u.short_name})</option>`;
+            });
+            return html;
+        }
+
+        function buildConversionUnitOptionsHtml(selectedUnitId) {
+            const want = selectedUnitId != null && selectedUnitId !== '' ? String(selectedUnitId) : '';
+            let html = '<option value="">Select</option>';
             unitsData.forEach(u => {
                 const sel = want && String(u.id) === want ? ' selected' : '';
                 html += `<option value="${u.id}"${sel}>${u.name} (${u.short_name})</option>`;
@@ -364,37 +428,48 @@
         }
         
         function toggleBillFields() {
-            const type = document.getElementById('type').value;
+            const typeEl = document.getElementById('type');
+            const type = typeEl ? typeEl.value : '';
             const billSelectionDiv = document.getElementById('billSelectionDiv');
             const createBillDiv = document.getElementById('createBillDiv');
             const billFieldsDiv = document.getElementById('billFieldsDiv');
             const productsSectionDiv = document.getElementById('productsSectionDiv');
             const createBillCheckbox = document.getElementById('create_bill');
             const amountInput = document.getElementById('amount');
+            if (!amountInput) return;
+
+            if (forceNewProducts) {
+                if (productsSectionDiv) productsSectionDiv.classList.remove('hidden');
+                amountInput.required = false;
+                const amountRequired = document.getElementById('amount-required');
+                if (amountRequired) amountRequired.style.display = 'none';
+                updateGrandTotal();
+                return;
+            }
 
             if (type === 'debit') {
                 // Show bill selection for payments (debit = payment made)
-                billSelectionDiv.classList.remove('hidden');
-                createBillDiv.classList.add('hidden');
-                billFieldsDiv.classList.add('hidden');
-                productsSectionDiv.classList.add('hidden');
+                if (billSelectionDiv) billSelectionDiv.classList.remove('hidden');
+                if (createBillDiv) createBillDiv.classList.add('hidden');
+                if (billFieldsDiv) billFieldsDiv.classList.add('hidden');
+                if (productsSectionDiv) productsSectionDiv.classList.add('hidden');
                 amountInput.required = true;
             } else if (type === 'credit') {
                 // Show create bill option for new bills (credit = amount owed)
-                billSelectionDiv.classList.add('hidden');
-                createBillDiv.classList.remove('hidden');
+                if (billSelectionDiv) billSelectionDiv.classList.add('hidden');
+                if (createBillDiv) createBillDiv.classList.remove('hidden');
                 
                 // Show bill fields and products section if checkbox is checked
                 if (createBillCheckbox && createBillCheckbox.checked) {
-                    billFieldsDiv.classList.remove('hidden');
-                    productsSectionDiv.classList.remove('hidden');
+                    if (billFieldsDiv) billFieldsDiv.classList.remove('hidden');
+                    if (productsSectionDiv) productsSectionDiv.classList.remove('hidden');
                     amountInput.required = false;
                     document.getElementById('amount-required').style.display = 'none';
                     // Check if products exist and update amount field accordingly
                     updateGrandTotal();
                 } else {
-                    billFieldsDiv.classList.add('hidden');
-                    productsSectionDiv.classList.add('hidden');
+                    if (billFieldsDiv) billFieldsDiv.classList.add('hidden');
+                    if (productsSectionDiv) productsSectionDiv.classList.add('hidden');
                     amountInput.required = true;
                     document.getElementById('amount-required').style.display = 'inline';
                     // Reset amount field to editable
@@ -407,10 +482,10 @@
                     }
                 }
             } else {
-                billSelectionDiv.classList.add('hidden');
-                createBillDiv.classList.add('hidden');
-                billFieldsDiv.classList.add('hidden');
-                productsSectionDiv.classList.add('hidden');
+                if (billSelectionDiv) billSelectionDiv.classList.add('hidden');
+                if (createBillDiv) createBillDiv.classList.add('hidden');
+                if (billFieldsDiv) billFieldsDiv.classList.add('hidden');
+                if (productsSectionDiv) productsSectionDiv.classList.add('hidden');
                 amountInput.required = true;
             }
         }
@@ -418,7 +493,7 @@
         function addProductRow(productId = null, productName = null, sku = null) {
             // SKU will be auto-generated by backend, so we don't need it as parameter
             // Check if product already exists in the table
-            if (productId || productName) {
+            if (!forceNewProducts && (productId || productName)) {
                 const existingRow = findExistingProductRow(productId, productName, sku);
                 if (existingRow) {
                     // Increase quantity instead of adding new row
@@ -447,7 +522,7 @@
                                name="products[${productRowIndex}][product_name]" 
                                class="product-name-input w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500" 
                                value="${product ? product.name : ''}" 
-                               placeholder="Type or search product (auto-merge if exists)"
+                               placeholder="Type or search product"
                                required
                                autocomplete="off"
                                list="supplier-products-list"
@@ -455,11 +530,17 @@
                                onblur="handleProductNameChange(this, ${productRowIndex})"
                                oninput="handleProductNameInput(this, ${productRowIndex}, false)"
                                onkeydown="if(event.key === 'Enter') { event.preventDefault(); handleProductNameChange(this, ${productRowIndex}); this.blur(); }">
-                        <input type="hidden" name="products[${productRowIndex}][product_id]" class="product-id-input" value="${product ? product.id : ''}">
+                        <input type="hidden" name="products[${productRowIndex}][product_id]" class="product-id-input" value="${product && !forceNewProducts ? product.id : ''}">
                         <input type="hidden" name="products[${productRowIndex}][category_id]" class="category-id-input" value="">
-                        <input type="hidden" name="products[${productRowIndex}][product_sku]" class="product-sku-input" value="${product ? product.sku : ''}">
+                        <input type="hidden" name="products[${productRowIndex}][product_sku]" class="product-sku-input" value="${product && !forceNewProducts ? product.sku : ''}">
                         <input type="hidden" name="products[${productRowIndex}][discount]" class="discount-input" value="0">
                         <input type="hidden" name="products[${productRowIndex}][tax]" class="tax-input" value="0">
+                        ${forceNewProducts
+                            ? `<input type="hidden" name="products[${productRowIndex}][create_new]" value="1" class="create-new-input">`
+                            : `<label class="mt-1.5 flex items-center gap-1.5 text-[11px] text-gray-600">
+                            <input type="checkbox" name="products[${productRowIndex}][create_new]" value="1" class="create-new-input rounded border-gray-300 text-orange-600 focus:ring-orange-500" onchange="toggleCreateNewProduct(this, ${productRowIndex})">
+                            Create as new product
+                        </label>`}
                     </div>
                 </td>
                 <td class="px-3 py-2.5 align-top">
@@ -526,6 +607,15 @@
                            placeholder="0.00">
                 </td>
                 <td class="px-3 py-2.5 align-top">
+                    <input type="number"
+                           name="products[${productRowIndex}][extra_price]"
+                           class="extra-price-input w-full min-w-0 px-2 py-1.5 text-sm tabular-nums border border-gray-200 rounded-lg bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                           value="${product && product.extra_price ? product.extra_price : '0.00'}"
+                           min="0"
+                           step="0.01"
+                           placeholder="Extra">
+                </td>
+                <td class="px-3 py-2.5 align-top">
                     <input type="number" 
                            name="products[${productRowIndex}][total]" 
                            class="total-input w-full min-w-0 px-2 py-1.5 text-sm font-semibold tabular-nums border border-gray-200 rounded-lg bg-gray-50 text-gray-800" 
@@ -541,18 +631,141 @@
                 </td>
             `;
             
+            const rowIndex = productRowIndex;
             tbody.appendChild(row);
+            tbody.appendChild(buildBillConversionSectionRow(rowIndex));
             productRowIndex++;
+
+            if (forceNewProducts) {
+                addBillConversion(rowIndex);
+            }
             
             // Update table visibility
             updateTableVisibility();
             
             // Initialize price fields visibility based on selling type
-            togglePriceFieldsForRow(parseInt(row.dataset.index));
+            togglePriceFieldsForRow(rowIndex);
             
             // Calculate total for the new row
-            calculateRowTotal(parseInt(row.dataset.index));
+            calculateRowTotal(rowIndex);
             updateGrandTotal();
+        }
+
+        function escapeBillAttr(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function productUnitLabel(select) {
+            if (!select || !select.value) {
+                return 'Select a unit first';
+            }
+            const option = select.options[select.selectedIndex];
+            return option ? option.text : '';
+        }
+
+        function buildBillConversionSectionRow(productIndex) {
+            const conversionRow = document.createElement('tr');
+            conversionRow.className = 'product-conversion-row';
+            conversionRow.dataset.index = productIndex;
+            conversionRow.innerHTML = `
+                <td colspan="10" class="px-3 pb-4 pt-0 bg-slate-50/60">
+                    <div class="create-new-conversion rounded-lg border border-gray-200 bg-white p-4" ${forceNewProducts ? '' : 'style="display:none"'}>
+                        <h4 class="text-sm font-semibold text-gray-700 mb-1">Unit Conversions</h4>
+                        <p class="text-xs text-gray-500 mb-3">Same as Create Product. From Unit is the product unit. Set To Unit and Conversion Factor (1 from_unit = factor × to_unit).</p>
+                        <div class="bill-conversions-container space-y-3" data-product-index="${productIndex}" data-next-conv-index="0"></div>
+                        <button type="button"
+                                onclick="addBillConversion(${productIndex})"
+                                class="mt-3 text-sm text-orange-600 hover:text-orange-700 underline">
+                            + Add Conversion Factor
+                        </button>
+                    </div>
+                </td>
+            `;
+            return conversionRow;
+        }
+
+        function addBillConversion(productIndex) {
+            const container = document.querySelector(`.bill-conversions-container[data-product-index="${productIndex}"]`);
+            const productRow = document.querySelector(`tr.product-row[data-index="${productIndex}"]`);
+            if (!container || !productRow) {
+                return;
+            }
+            const unitSelect = productRow.querySelector('.unit-select-input');
+            const fromUnitId = unitSelect ? unitSelect.value : '';
+            const fromUnitName = productUnitLabel(unitSelect);
+            const convIndex = parseInt(container.dataset.nextConvIndex || '0', 10);
+            container.dataset.nextConvIndex = String(convIndex + 1);
+
+            const conversionRow = document.createElement('div');
+            conversionRow.className = 'bill-conversion-row p-3 border border-gray-200 rounded bg-white';
+            conversionRow.innerHTML = `
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">From Unit <span class="text-red-500">*</span></label>
+                        <input type="hidden" name="products[${productIndex}][conversions][${convIndex}][from_unit_id]" value="${escapeBillAttr(fromUnitId)}" class="conversion-from-unit-hidden">
+                        <input type="text"
+                               value="${escapeBillAttr(fromUnitName)}"
+                               readonly
+                               disabled
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm bg-gray-100 text-gray-700 cursor-not-allowed conversion-from-unit-display">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">To Unit <span class="text-red-500">*</span></label>
+                        <select name="products[${productIndex}][conversions][${convIndex}][to_unit_id]"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm conversion-to-unit">
+                            ${buildConversionUnitOptionsHtml('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-600 mb-1">Conversion Factor <span class="text-red-500">*</span></label>
+                        <input type="number"
+                               name="products[${productIndex}][conversions][${convIndex}][factor]"
+                               step="0.01"
+                               min="0.01"
+                               max="999999.99"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm conversion-factor"
+                               placeholder="e.g., 50.00"
+                               onblur="if (this.value) this.value = parseFloat(this.value).toFixed(2)">
+                        <span class="text-xs text-gray-500">(1 from_unit = factor × to_unit)</span>
+                    </div>
+                    <div>
+                        <button type="button"
+                                onclick="removeBillConversion(this)"
+                                class="w-full px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-md text-sm">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            `;
+            container.appendChild(conversionRow);
+        }
+
+        function removeBillConversion(button) {
+            const row = button.closest('.bill-conversion-row');
+            if (row) {
+                row.remove();
+            }
+        }
+
+        function syncBillConversionFromUnit(productIndex) {
+            const productRow = document.querySelector(`tr.product-row[data-index="${productIndex}"]`);
+            const container = document.querySelector(`.bill-conversions-container[data-product-index="${productIndex}"]`);
+            if (!productRow || !container) {
+                return;
+            }
+            const unitSelect = productRow.querySelector('.unit-select-input');
+            const fromUnitId = unitSelect ? unitSelect.value : '';
+            const fromUnitName = productUnitLabel(unitSelect);
+            container.querySelectorAll('.conversion-from-unit-hidden').forEach((input) => {
+                input.value = fromUnitId;
+            });
+            container.querySelectorAll('.conversion-from-unit-display').forEach((input) => {
+                input.value = fromUnitName;
+            });
         }
         
         /** Resolve datalist option without CSS selector injection (names/SKUs may contain quotes). */
@@ -592,6 +805,9 @@
             }
 
             for (let row of rows) {
+                if (row.querySelector('.create-new-input')?.checked) {
+                    continue;
+                }
                 const rowProductId = String(row.querySelector('.product-id-input').value || '');
                 const rowProductName = row.querySelector('.product-name-input').value.trim().toLowerCase();
                 const rowSku = String(row.querySelector('.product-sku-input')?.value || '').trim().toLowerCase();
@@ -621,6 +837,17 @@
             
             const row = input.closest('tr');
             if (!row || !row.classList.contains('product-row') || !row.isConnected) return;
+
+            const createNew = row.querySelector('.create-new-input')?.checked;
+            if (createNew && fromChange) {
+                row.querySelector('.product-id-input').value = '';
+                const skuInput = row.querySelector('.product-sku-input');
+                if (skuInput && (!skuInput.value || skuInput.dataset.autoGenerated === 'true')) {
+                    skuInput.value = generateSku(value);
+                    skuInput.dataset.autoGenerated = 'true';
+                }
+                return;
+            }
             
             let selectedOption = resolveDatalistOption('supplier-products-list', value);
             
@@ -724,6 +951,11 @@
                 if (wholesalePriceInput) {
                     wholesalePriceInput.value = parseFloat(wholesalePrice).toFixed(2);
                 }
+                const extraPriceInput = row.querySelector('.extra-price-input');
+                const extraPrice = selectedOption.getAttribute('data-extra-price') || (pd && pd.extra_price) || '0';
+                if (extraPriceInput) {
+                    extraPriceInput.value = parseFloat(extraPrice).toFixed(2);
+                }
                 
                 // Toggle price fields based on selling type
                 togglePriceFieldsForRow(index);
@@ -776,7 +1008,7 @@
         
         // Toggle price fields based on selling type for a specific row
         function togglePriceFieldsForRow(index) {
-            const row = document.querySelector(`tr[data-index="${index}"]`);
+            const row = document.querySelector(`tr.product-row[data-index="${index}"]`);
             if (!row) return;
             
             const sellingTypeSelect = row.querySelector('.selling-type-input');
@@ -844,7 +1076,7 @@
         }
         
         function calculateRowTotal(index) {
-            const row = document.querySelector(`tr[data-index="${index}"]`);
+            const row = document.querySelector(`tr.product-row[data-index="${index}"]`);
             if (!row) return;
             
             const quantity = parseFloat(row.querySelector('.quantity-input').value) || 0;
@@ -899,6 +1131,40 @@
             
             // Validate paid amount when bill amount changes
             validatePaidAmount();
+            syncPaidInCash();
+        }
+
+        function toggleCreateNewProduct(checkbox, index) {
+            const row = document.querySelector(`tr.product-row[data-index="${index}"]`);
+            if (!row) return;
+            const conversionRow = document.querySelector(`tr.product-conversion-row[data-index="${index}"]`);
+            const conversionBox = conversionRow ? conversionRow.querySelector('.create-new-conversion') : null;
+            if (conversionBox) {
+                conversionBox.style.display = checkbox.checked ? '' : 'none';
+            }
+            if (checkbox.checked) {
+                row.querySelector('.product-id-input').value = '';
+                const container = conversionRow ? conversionRow.querySelector('.bill-conversions-container') : null;
+                if (container && container.querySelectorAll('.bill-conversion-row').length === 0) {
+                    addBillConversion(index);
+                }
+            }
+        }
+
+        function syncPaidInCash() {
+            const paid = document.getElementById('paid_amount');
+            const amount = document.getElementById('amount');
+            const cash = document.getElementById('paid_in_cash');
+            if (!paid || !amount) {
+                return;
+            }
+            if (!forceNewProducts && (!cash || !cash.checked)) {
+                return;
+            }
+            const total = parseFloat(amount.value) || 0;
+            if (total > 0) {
+                paid.value = total.toFixed(2);
+            }
         }
         
         function updateCalculatedAmount() {
@@ -949,8 +1215,16 @@
         }
         
         function removeProductRow(button) {
-            const row = button.closest('tr');
+            const row = button.closest('tr.product-row');
+            if (!row) {
+                return;
+            }
+            const index = row.dataset.index;
+            const conversionRow = document.querySelector(`tr.product-conversion-row[data-index="${index}"]`);
             row.remove();
+            if (conversionRow) {
+                conversionRow.remove();
+            }
             updateGrandTotal();
             updatePriceHeaders(); // Update headers after removing a row
             updateTableVisibility(); // Update table visibility
@@ -1024,10 +1298,11 @@
         function validateBillAmount() {
             const productRows = document.querySelectorAll('.product-row').length;
             const createBillCheckbox = document.getElementById('create_bill');
-            const type = document.getElementById('type').value;
+            const typeEl = document.getElementById('type');
+            const type = typeEl ? typeEl.value : '';
             
             // Only validate if creating a bill with products
-            if (type === 'credit' && createBillCheckbox && createBillCheckbox.checked && productRows > 0) {
+            if (type === 'credit' && createBillCheckbox && (createBillCheckbox.checked || createBillCheckbox.value === '1') && productRows > 0) {
                 const grandTotal = parseFloat(document.getElementById('calculated_amount').value) || 0;
                 const amountValue = parseFloat(document.getElementById('amount').value) || 0;
                 
@@ -1039,12 +1314,13 @@
             
             // Also validate paid amount
             validatePaidAmount();
+            syncPaidInCash();
             return true;
         }
         
         // Handle unit change (catalog product keeps inventory base_unit_id; line unit_id is what user picked)
         function handleUnitChange(select, index) {
-            const row = select.closest('tr');
+            const row = select.closest('tr.product-row');
             const productId = row.querySelector('.product-id-input').value;
             const baseUnitHidden = row.querySelector('.base-unit-id-input');
             if (productId && baseUnitHidden) {
@@ -1058,6 +1334,7 @@
                     baseUnitHidden.value = uid;
                 }
             }
+            syncBillConversionFromUnit(index);
         }
 
         function ensureSharedProductsDatalist() {
@@ -1068,10 +1345,10 @@
             dl.id = 'supplier-products-list';
             dl.innerHTML = productsData.map(p => {
                 const displayName = p.sku ? `${p.name} (${p.sku})` : p.name;
-                return `<option value="${p.name}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
+                return `<option value="${p.name}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-extra-price="${p.extra_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
             }).join('') + productsData.filter(p => p.sku).map(p => {
                 const displayName = `${p.name} (${p.sku})`;
-                return `<option value="${p.sku}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
+                return `<option value="${p.sku}" label="${displayName}" data-display="${displayName}" data-id="${p.id}" data-sku="${p.sku || ''}" data-price="${p.purchase_price || 0}" data-unit-id="${p.unit_id || ''}" data-base-unit-id="${p.base_unit_id || ''}" data-selling-type="${p.selling_type || 'both'}" data-retail-price="${p.retail_price || 0}" data-wholesale-price="${p.wholesale_price || 0}" data-extra-price="${p.extra_price || 0}" data-available-units='${JSON.stringify(p.available_units || [])}'></option>`;
             }).join('');
             document.body.appendChild(dl);
         }
@@ -1079,6 +1356,12 @@
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             ensureSharedProductsDatalist();
+            if (forceNewProducts) {
+                toggleBillFields();
+                addProductRow();
+                syncPaidInCash();
+                return;
+            }
             toggleBillFields();
         });
     </script>

@@ -10,13 +10,17 @@ use App\Models\ProductUnit;
 use App\Models\UnitConversion;
 use App\Models\Branch;
 use App\Models\BranchProductStock;
+use App\Models\ProductLot;
 use App\Services\BranchStockService;
+use App\Services\ProductLotService;
+use App\Services\UnitConversionService;
 use App\Support\BranchRules;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -499,8 +503,64 @@ class ProductController extends Controller
         $productHistory = $product->history()->with('supplier', 'supplierBill')->get();
 
         $branchOnlyEdits = ! $product->writesMasterForCurrentBranch();
-        
-        return view('products.edit', compact('product', 'categories', 'units', 'suppliers', 'productHistory', 'productUnits', 'conversions', 'branchOnlyEdits'));
+
+        $branchId = CurrentBranch::id();
+        $stockLots = collect();
+        if ($branchId) {
+            $stockLots = ProductLot::query()
+                ->with('unit')
+                ->where('branch_id', $branchId)
+                ->where('product_id', $product->id)
+                ->orderBy('purchase_price')
+                ->orderBy('id')
+                ->get();
+        }
+
+        $conversionService = app(UnitConversionService::class);
+        $baseUnitId = (int) ($product->base_unit_id ?? $product->unit_id);
+        $receiveUnitIds = collect([$baseUnitId, (int) $product->unit_id])
+            ->merge($productUnits->pluck('unit_id'))
+            ->filter()
+            ->unique()
+            ->values();
+        $receiveUnits = Unit::query()
+            ->whereIn('id', $receiveUnitIds)
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get()
+            ->map(function (Unit $unit) use ($product, $conversionService) {
+                $perBase = 0.0;
+                try {
+                    $perBase = $conversionService->unitsPerBase($product, (int) $unit->id);
+                } catch (\Exception $e) {
+                    $perBase = 0.0;
+                }
+
+                return [
+                    'id' => (int) $unit->id,
+                    'name' => $unit->name,
+                    'short_name' => $unit->short_name,
+                    'units_per_base' => $perBase > 0 ? $perBase : (((int) $unit->id === (int) ($product->base_unit_id ?? $product->unit_id)) ? 1.0 : 0.0),
+                ];
+            });
+        $baseUnitLabel = optional($units->firstWhere('id', $baseUnitId))->short_name
+            ?? $product->unit->short_name
+            ?? '';
+
+        return view('products.edit', compact(
+            'product',
+            'categories',
+            'units',
+            'suppliers',
+            'productHistory',
+            'productUnits',
+            'conversions',
+            'branchOnlyEdits',
+            'stockLots',
+            'receiveUnits',
+            'baseUnitLabel',
+            'baseUnitId'
+        ));
     }
 
     public function update(Request $request, Product $product)
@@ -553,6 +613,9 @@ class ProductController extends Controller
             'conversions.*.to_unit_id' => 'required_with:conversions.*.from_unit_id,conversions.*.factor|exists:units,id|different:conversions.*.from_unit_id',
             'conversions.*.factor' => 'required_with:conversions.*.from_unit_id,conversions.*.to_unit_id|numeric|min:0.01|max:999999.99|regex:/^\d+(\.\d{1,2})?$/',
             'conversions.*.id' => 'nullable|exists:unit_conversions,id',
+            'add_received_qty' => 'nullable|numeric|min:0',
+            'add_received_unit_id' => 'nullable|integer|exists:units,id',
+            'add_lot_id' => 'nullable|integer|exists:product_lots,id',
         ]);
 
         // Validate and set prices based on selling_type
@@ -616,12 +679,17 @@ class ProductController extends Controller
 
         $branchStockQty = (float) ($validated['stock_quantity'] ?? 0);
         unset($validated['stock_quantity']); // do not write shared legacy column from form
+        unset($validated['add_received_qty'], $validated['add_received_unit_id'], $validated['add_lot_id']);
+        $addingReceived = (float) $request->input('add_received_qty', 0) > 0;
 
         DB::beginTransaction();
         try {
             $product->update($validated);
-            $product->setBranchStock($branchStockQty);
+            if (! $addingReceived) {
+                $product->setBranchStock($branchStockQty);
+            }
             $product->setBranchSellingType($validated['selling_type'] ?? 'both');
+            $this->applyReceivedStock($request, $product->fresh(['productUnits.unit', 'currentBranchStock']));
             
             // Update ProductUnit records
             // First, update or create base unit ProductUnit
@@ -986,7 +1054,11 @@ class ProductController extends Controller
                 'kept_ids' => $keepConversionIds,
             ]);
 
+            $this->syncLotSellingForCurrentRate($product, $validated);
             DB::commit();
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             \Log::error('Error updating product', [
@@ -1132,6 +1204,7 @@ class ProductController extends Controller
                 'selling_price' => $p->selling_price,
                 'retail_price' => $p->retail_price ?? $p->selling_price,
                 'wholesale_price' => $p->wholesale_price ?? $p->selling_price,
+                'extra_price' => $p->extra_price ?? 0,
                 'selling_type' => $p->selling_type ?? 'retail',
                 'stock_quantity' => $p->stock_quantity,
                 'unit_id' => $baseUnit,
@@ -1320,6 +1393,9 @@ class ProductController extends Controller
             'retail_price' => 'nullable|numeric|min:0',
             'wholesale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'required|numeric|min:0',
+            'add_received_qty' => 'nullable|numeric|min:0',
+            'add_received_unit_id' => 'nullable|integer|exists:units,id',
+            'add_lot_id' => 'nullable|integer|exists:product_lots,id',
         ]);
 
         if ($validated['selling_type'] === 'retail') {
@@ -1354,22 +1430,102 @@ class ProductController extends Controller
             $validated['selling_price'] = $validated['retail_price'];
         }
 
+        $addingReceived = (float) $request->input('add_received_qty', 0) > 0;
+        $overrides = [
+            'display_name' => $validated['name'],
+            'purchase_price' => $validated['purchase_price'] ?? null,
+            'selling_price' => $validated['selling_price'] ?? null,
+            'retail_price' => $validated['retail_price'] ?? null,
+            'wholesale_price' => $validated['wholesale_price'] ?? null,
+            'selling_type' => $validated['selling_type'] ?? 'both',
+        ];
+        if (! $addingReceived) {
+            $overrides['stock_quantity'] = (float) ($validated['stock_quantity'] ?? 0);
+        }
+
         try {
-            app(BranchStockService::class)->setOverrides($product, [
-                'display_name' => $validated['name'],
-                'purchase_price' => $validated['purchase_price'] ?? null,
-                'selling_price' => $validated['selling_price'] ?? null,
-                'retail_price' => $validated['retail_price'] ?? null,
-                'wholesale_price' => $validated['wholesale_price'] ?? null,
-                'stock_quantity' => (float) ($validated['stock_quantity'] ?? 0),
-                'selling_type' => $validated['selling_type'] ?? 'both',
-            ]);
-            $product->unsetRelation('currentBranchStock');
+            DB::transaction(function () use ($request, $product, $overrides) {
+                app(BranchStockService::class)->setOverrides($product, $overrides);
+                $product->unsetRelation('currentBranchStock');
+                $this->applyReceivedStock($request, $product->fresh(['productUnits.unit', 'currentBranchStock']));
+                $this->syncLotSellingForCurrentRate($product, $overrides);
+            });
 
             return redirect()->route('products.index')
                 ->with('success', 'Saved for this branch only. Admin catalog product was not changed.');
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Failed to update branch product: '.$e->getMessage()])->withInput();
+        }
+    }
+
+    /**
+     * Write selling prices onto the lot that matches this product's current purchase rate.
+     */
+    protected function syncLotSellingForCurrentRate(Product $product, array $prices): void
+    {
+        $branchId = CurrentBranch::id();
+        if (! $branchId) {
+            return;
+        }
+
+        app(ProductLotService::class)->updateSellingForPurchaseRate(
+            $product,
+            (int) $branchId,
+            (float) ($prices['purchase_price'] ?? $product->purchase_price ?? 0),
+            $prices
+        );
+    }
+
+    /**
+     * Add received quantity (in any configured unit) onto the selected same-price lot.
+     */
+    protected function applyReceivedStock(Request $request, Product $product): void
+    {
+        $qty = (float) $request->input('add_received_qty', 0);
+        if ($qty <= 0) {
+            return;
+        }
+
+        $unitId = $request->filled('add_received_unit_id')
+            ? (int) $request->input('add_received_unit_id')
+            : (int) ($product->base_unit_id ?? $product->unit_id);
+
+        if (! $unitId) {
+            throw ValidationException::withMessages([
+                'add_received_unit_id' => 'Select the unit for the quantity you received.',
+            ]);
+        }
+
+        try {
+            $qtyInBase = app(UnitConversionService::class)->toBaseQuantity($product, $qty, $unitId);
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages([
+                'add_received_unit_id' => $e->getMessage(),
+            ]);
+        }
+
+        if ($qtyInBase <= 0) {
+            throw ValidationException::withMessages([
+                'add_received_qty' => 'Converted quantity must be greater than zero.',
+            ]);
+        }
+
+        $lotId = $request->filled('add_lot_id') ? (int) $request->input('add_lot_id') : null;
+
+        $product->incrementStock($qtyInBase, null, [
+            'source_type' => 'product_edit',
+            'source_id' => $product->id,
+            'reason' => 'add_received_stock',
+        ]);
+
+        try {
+            app(ProductLotService::class)->addReceivedQuantity($product, $qtyInBase, $lotId);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'add_lot_id' => $e->getMessage(),
+            ]);
         }
     }
 
