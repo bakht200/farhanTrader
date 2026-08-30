@@ -193,6 +193,9 @@ export async function prefetchAppShells(urls) {
     if (!isOnline()) {
         return { ok: 0, failed: 0 };
     }
+    if (typeof window !== 'undefined' && (window.location.pathname || '').includes('/login')) {
+        return { ok: 0, failed: 0 };
+    }
 
     const extra = await collectSupplierPageUrls();
     const list = [...new Set([...(urls && urls.length ? urls : collectNavUrls()), ...extra])];

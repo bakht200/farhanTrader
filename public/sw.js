@@ -293,16 +293,28 @@ async function storePage(cache, path, res) {
   return true;
 }
 
+let precacheGeneration = 0;
+
 async function precacheUrls(urls) {
+  const generation = precacheGeneration;
+  if (loggedOut) {
+    return;
+  }
   const cache = await caches.open(CACHE_NAME);
   for (const path of urls) {
+    if (generation !== precacheGeneration || loggedOut) {
+      return;
+    }
     try {
       const fetchPath = isLoginPath(path) ? '/__ftpos_login_shell' : path;
       const res = await fetch(fetchPath, {
         credentials: 'same-origin',
         cache: 'no-cache',
-        redirect: isLoginPath(path) ? 'manual' : 'follow',
+        redirect: 'manual',
       });
+      if (!res || !res.ok || isRedirectResponse(res)) {
+        continue;
+      }
       await storePage(cache, isLoginPath(path) ? '/login' : path, res);
     } catch (e) {
       // ignore individual failures
@@ -320,6 +332,7 @@ self.addEventListener('message', (event) => {
   if (event.data?.type === 'LOGOUT') {
     preferCache = false;
     vaultSession = false;
+    precacheGeneration += 1;
     event.waitUntil(Promise.all([
       persistLoggedOut(true),
       persistVaultSession(false),
@@ -337,6 +350,9 @@ self.addEventListener('message', (event) => {
     return;
   }
   if (event.data?.type === 'PRECACHE' && Array.isArray(event.data.urls)) {
+    if (loggedOut) {
+      return;
+    }
     event.waitUntil(precacheUrls(event.data.urls));
   }
 });
@@ -581,26 +597,11 @@ self.addEventListener('fetch', (event) => {
 
   // Sign In POST is a document navigation. Never send it to the network
   // when the link is down — that is Chrome's dinosaur page.
+  // When online, let the browser complete the POST so /dashboard is not canceled.
   if (isLoginPath(url.pathname) && req.method === 'POST') {
-    event.respondWith((async () => {
-      if (browserIsOffline()) {
-        return serveLoginHtml();
-      }
-      try {
-        const res = await fetch(req, { credentials: 'same-origin', redirect: 'manual' });
-        if (isRedirectResponse(res)) {
-          const loc = res.headers.get('Location');
-          if (loc) {
-            return Response.redirect(new URL(loc, self.location.origin).href, 302);
-          }
-          return serveLoginHtml();
-        }
-        if (res && res.ok) {
-          return res;
-        }
-      } catch (e) {}
-      return serveLoginHtml();
-    })());
+    if (offline) {
+      event.respondWith(serveLoginHtml());
+    }
     return;
   }
 

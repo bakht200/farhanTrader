@@ -54,6 +54,9 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('/__ftpos_app_shell', $sw);
         $this->assertStringContainsString('a just-submitted Sign In must reach Laravel', $sw);
         $this->assertStringContainsString('isLoginPath(url.pathname) && req.method === \'POST\'', $sw);
+        $this->assertStringContainsString('let the browser complete the POST', $sw);
+        $this->assertStringContainsString('precacheGeneration', $sw);
+        $this->assertStringContainsString('if (generation !== precacheGeneration || loggedOut)', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -87,6 +90,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
         $this->assertStringContainsString("ftpos-pages-v12", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
+        $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));
     }

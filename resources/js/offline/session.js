@@ -1,7 +1,7 @@
 import { clearLocalSession } from './authVault';
 import { getMeta, setMeta } from './db';
 
-export const APP_VERSION = '2.10';
+export const APP_VERSION = '2.11';
 export const LOGIN_URL = '/login';
 export const LAST_BRANCH_STORAGE_KEY = 'ftpos_last_branch_id';
 const VERSION_STORAGE_KEY = 'ftpos_app_version';
