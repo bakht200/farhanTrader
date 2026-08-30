@@ -1,5 +1,6 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v11';
+const CACHE_NAME = 'ftpos-pages-v12';
+const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
 const NAV_TIMEOUT_UNCACHED_MS = 4000;
@@ -71,11 +72,32 @@ self.addEventListener('install', (event) => {
   })());
 });
 
+async function adoptOldCaches(newCache) {
+  const keys = await caches.keys();
+  const stale = keys.filter((k) => k !== CACHE_NAME && k.startsWith('ftpos-'));
+  for (const name of stale) {
+    try {
+      const old = await caches.open(name);
+      const reqs = await old.keys();
+      for (const req of reqs) {
+        const already = await newCache.match(req);
+        if (already) {
+          continue;
+        }
+        const res = await old.match(req);
+        if (res) {
+          await newCache.put(req, res);
+        }
+      }
+      await caches.delete(name);
+    } catch (e) {}
+  }
+}
+
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    const keys = await caches.keys();
-    const stale = keys.filter((k) => k !== CACHE_NAME && k.startsWith('ftpos-'));
-    await Promise.all(stale.map((k) => caches.delete(k)));
+    const cache = await caches.open(CACHE_NAME);
+    await adoptOldCaches(cache);
     await restoreLoggedOut();
     await self.clients.claim();
   })());
@@ -165,7 +187,7 @@ async function firstHtml(paths) {
   for (const path of paths) {
     const hit = await caches.match(path, { ignoreSearch: true })
       || await caches.match(new URL(path, self.location.origin).href, { ignoreSearch: true });
-    if (hit) {
+    if (hit && !isOfflineHtml(hit)) {
       return hit;
     }
   }
@@ -175,15 +197,18 @@ async function firstHtml(paths) {
 async function offlineNavigationFallback(requestPath, preferLogin) {
   const p = (requestPath || '').replace(/\/+$/, '') || '/';
   if (preferLogin) {
-    return (await firstHtml(['/login', '/offline.html'])) || fallbackDocument();
+    return (await firstHtml(['/login', APP_SHELL_PATH, '/offline.html'])) || fallbackDocument();
   }
   if (isCustomerAppPath(p)) {
-    return (await firstHtml(['/customers', '/dashboard', '/offline.html'])) || fallbackDocument();
+    return (await firstHtml(['/customers', APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
   }
   if (isSupplierAppPath(p)) {
-    return (await firstHtml(['/suppliers', '/dashboard', '/offline.html'])) || fallbackDocument();
+    return (await firstHtml(['/suppliers', APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
   }
-  return (await firstHtml([p, '/dashboard', '/login', '/offline.html'])) || fallbackDocument();
+  if (isDashboardPath(p)) {
+    return (await firstHtml(['/dashboard', APP_SHELL_PATH, '/customers', '/suppliers', '/login'])) || fallbackDocument();
+  }
+  return (await firstHtml([p, APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
 }
 
 async function notifySessionExpired() {
@@ -222,6 +247,15 @@ async function storePage(cache, path, res) {
     await cache.put(path.replace(/\/$/, '') || '/', stored.clone());
   } else {
     await cache.put(path + '/', stored.clone());
+  }
+  if (
+    !isLoginPath(path)
+    && path !== '/offline.html'
+    && !path.startsWith('/__ftpos_')
+    && !isOfflineHtml(stored)
+  ) {
+    await cache.put(APP_SHELL_PATH, stored.clone());
+    await cache.put(new URL(APP_SHELL_PATH, self.location.origin).href, stored.clone());
   }
   return true;
 }
@@ -462,13 +496,14 @@ async function matchNavigation(request) {
     }
   }
   if (!loggedOut) {
-    const dash = await cache.match('/dashboard', { ignoreSearch: true })
+    const shell = await cache.match(APP_SHELL_PATH)
+      || await cache.match('/dashboard', { ignoreSearch: true })
       || await cache.match(new URL('/dashboard', self.location.origin).href);
-    if (dash && !responseIsLogin(dash) && !isOfflineHtml(dash)) {
-      return dash;
+    if (shell && !responseIsLogin(shell) && !isOfflineHtml(shell)) {
+      return shell;
     }
   }
-  return cache.match('/offline.html');
+  return null;
 }
 
 self.addEventListener('fetch', (event) => {

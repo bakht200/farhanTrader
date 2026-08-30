@@ -42,9 +42,11 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/__ftpos_vault_session'", $sw);
         $this->assertStringContainsString('function fallbackDocument()', $sw);
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
-        $this->assertStringContainsString('ftpos-pages-v11', $sw);
+        $this->assertStringContainsString('ftpos-pages-v12', $sw);
         $this->assertStringContainsString('htmlLooksLikeDashboard', $sw);
         $this->assertStringContainsString('isCustomerAppPath', $sw);
+        $this->assertStringContainsString('adoptOldCaches', $sw);
+        $this->assertStringContainsString('/__ftpos_app_shell', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -69,7 +71,7 @@ class OfflineReliabilityTest extends TestCase
 
         $this->assertNotFalse($prefetch);
         $this->assertStringContainsString("'/login'", $prefetch);
-        $this->assertStringContainsString("ftpos-pages-v11", $prefetch);
+        $this->assertStringContainsString("ftpos-pages-v12", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));

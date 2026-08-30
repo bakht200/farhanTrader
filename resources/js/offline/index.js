@@ -123,6 +123,29 @@ async function maybeEnrollAfterLogin() {
     }
 }
 
+async function openCachedApp(path) {
+    const order = [path, '/dashboard', '/__ftpos_app_shell', '/customers', '/suppliers', '/sales/pos', '/products'];
+    try {
+        const cache = await caches.open(CACHE_NAME);
+        for (const candidate of order) {
+            const hit = await cache.match(candidate)
+                || await cache.match(new URL(candidate, window.location.origin).href);
+            if (!hit) {
+                continue;
+            }
+            const url = String(hit.url || '');
+            if (url.includes('/offline.html') || url.includes('/login')) {
+                continue;
+            }
+            window.location.replace(candidate.startsWith('/__') ? '/dashboard' : candidate);
+            return;
+        }
+    } catch {
+        // ignore
+    }
+    window.location.replace(path);
+}
+
 async function cacheLoginShell() {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         return;
@@ -147,10 +170,34 @@ async function cacheLoginShell() {
     }
 }
 
+async function pinDashboardNow() {
+    if (!isOnline() || !('caches' in window)) {
+        return;
+    }
+    try {
+        const res = await fetch('/dashboard', {
+            credentials: 'same-origin',
+            cache: 'no-cache',
+            headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+        });
+        if (!res.ok) {
+            return;
+        }
+        const cache = await caches.open(CACHE_NAME);
+        const stored = res.clone();
+        await cache.put('/dashboard', stored.clone());
+        await cache.put(new URL('/dashboard', window.location.origin).href, stored.clone());
+        await cache.put('/__ftpos_app_shell', stored.clone());
+    } catch {
+        // ignore
+    }
+}
+
 async function warmOfflineShells() {
     if (!isOnline()) {
         return;
     }
+    await pinDashboardNow();
     prefetchAppShells(CORE_SHELLS).catch(() => {});
     try {
         if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {
@@ -283,7 +330,7 @@ async function setupLoginForm() {
             }
             await notifyServiceWorkerLogin({ vault: true });
             showToast('Signed in offline');
-            window.location.replace('/dashboard');
+            await openCachedApp('/dashboard');
         } catch (e) {
             showToast(e.message || 'Offline login failed');
             if (gate) {

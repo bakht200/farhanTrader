@@ -62,7 +62,11 @@
             }
         } catch (e) {}
         document.getElementById('msg').textContent =
-            'This page is not available offline yet. If the shop has internet, tap Retry connection.';
+            'No internet. Open Login if you have signed in on this PC before.';
+        if (navigator.onLine === false) {
+            location.replace('/login');
+            return false;
+        }
         return false;
     }
 
