@@ -312,6 +312,7 @@ async function setupLoginForm() {
             } catch {
                 // Native submit still works if the token on the page is fresh.
             }
+            await notifyServiceWorkerLogin();
             form.submit();
             return;
         } else {

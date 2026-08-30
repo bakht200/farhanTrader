@@ -428,11 +428,27 @@ async function handleNavigation(request) {
   }
 
   if (loggedOut && !isLoginPath(path)) {
+    if (offline) {
+      return serveLoginHtml();
+    }
+    // Internet is on: a just-submitted Sign In must reach Laravel.
+    // Never keep painting the login form over /dashboard.
+    try {
+      const res = await fetchWithTimeout(request, NAV_TIMEOUT_UNCACHED_MS);
+      if (res && res.ok && !isRedirectResponse(res) && !responseIsLogin(res) && !isOfflineHtml(res)) {
+        await persistLoggedOut(false);
+        try {
+          const cache = await caches.open(CACHE_NAME);
+          await storePage(cache, path, res.clone());
+        } catch (e) {}
+        return res;
+      }
+    } catch (e) {}
     return serveLoginHtml();
   }
 
   if (isLoginPath(path)) {
-    if (offline || loggedOut) {
+    if (offline) {
       return serveLoginHtml();
     }
     return handleAuthNavigation(request);

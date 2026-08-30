@@ -52,6 +52,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('isCustomerAppPath', $sw);
         $this->assertStringContainsString('adoptOldCaches', $sw);
         $this->assertStringContainsString('/__ftpos_app_shell', $sw);
+        $this->assertStringContainsString('a just-submitted Sign In must reach Laravel', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -266,6 +267,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('persistLastBranchId', $runtime);
         $this->assertStringContainsString('warmOfflineShells', $runtime);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $runtime);
+        $this->assertStringContainsString('await notifyServiceWorkerLogin();', $runtime);
         $this->assertStringContainsString('resolveOfflineBranchId', $runtime);
         $this->assertStringContainsString('expandCachedProductsToPosCards', file_get_contents(resource_path('views/pos/index.blade.php')));
         $this->assertStringContainsString('Pick a branch while online', file_get_contents(resource_path('views/pos/index.blade.php')));
