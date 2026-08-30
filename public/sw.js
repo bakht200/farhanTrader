@@ -508,12 +508,25 @@ async function matchNavigation(request) {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET') {
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) {
     return;
   }
 
-  const url = new URL(req.url);
-  if (url.origin !== self.location.origin) {
+  // Logout POST is a document navigation. Never send it to the network
+  // when Wi‑Fi is off — that is the Chrome dinosaur page.
+  if (req.mode === 'navigate' && isLogoutPath(url.pathname)) {
+    if (browserIsOffline()) {
+      event.respondWith((async () => {
+        await persistLoggedOut(true);
+        await persistVaultSession(false);
+        return (await cachedLoginPage()) || fallbackDocument();
+      })());
+    }
+    return;
+  }
+
+  if (req.method !== 'GET') {
     return;
   }
 

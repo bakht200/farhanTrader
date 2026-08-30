@@ -1,7 +1,7 @@
 import { clearLocalSession } from './authVault';
 import { getMeta, setMeta } from './db';
 
-export const APP_VERSION = '2.6';
+export const APP_VERSION = '2.7';
 export const LOGIN_URL = '/login';
 export const LAST_BRANCH_STORAGE_KEY = 'ftpos_last_branch_id';
 const VERSION_STORAGE_KEY = 'ftpos_app_version';
@@ -148,10 +148,12 @@ export async function redirectToLogin() {
 export async function logoutAndRedirect() {
     window.__ftposLoggingOut = true;
     await notifyServiceWorkerLogout();
-    try {
-        await postLogout();
-    } catch {
-        // Session/CSRF may already be gone.
+    if (!browserIsOffline()) {
+        try {
+            await postLogout();
+        } catch {
+            // Session/CSRF may already be gone.
+        }
     }
     await wipeClientSession();
     goToLogin();

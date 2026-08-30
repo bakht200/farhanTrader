@@ -36,6 +36,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('persistLoggedOut', $sw);
         $this->assertStringNotContainsString('client.navigate', $sw);
         $this->assertStringContainsString('NAV_TIMEOUT_ONLINE_MS = 2500', $sw);
+        $this->assertStringContainsString('req.mode === \'navigate\' && isLogoutPath', $sw);
         $this->assertStringContainsString('function browserIsOffline()', $sw);
         $this->assertStringContainsString('function redirectGoesToLogin', $sw);
         $this->assertStringContainsString('Never ask Laravel for a session then', $sw);
@@ -60,6 +61,8 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('wipeClientSessionOnly', $guard);
         $this->assertStringNotContainsString('reg.unregister()', $guard);
         $this->assertStringNotContainsString('caches.delete', $guard);
+        $this->assertStringContainsString('navigator.onLine !== false', $guard);
+        $this->assertStringContainsString("caches.match(LOGIN_URL)", $guard);
         $this->assertStringContainsString('persistLastBranchId', $session);
         $this->assertStringContainsString('browserIsOffline', $session);
         $this->assertStringNotContainsString('window.location.reload()', $session);

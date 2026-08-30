@@ -8,6 +8,23 @@
     var onLogin = (window.location.pathname || '').indexOf('/login') !== -1;
 
     function goLogin() {
+        if (navigator.onLine === false && 'caches' in window) {
+            caches.match(LOGIN_URL).then(function (hit) {
+                if (!hit) {
+                    window.location.replace(LOGIN_URL);
+                    return;
+                }
+                return hit.text().then(function (html) {
+                    window.history.replaceState(null, '', LOGIN_URL);
+                    document.open();
+                    document.write(html);
+                    document.close();
+                });
+            }).catch(function () {
+                window.location.replace(LOGIN_URL);
+            });
+            return;
+        }
         window.location.replace(LOGIN_URL);
     }
 
@@ -69,30 +86,32 @@
         }
 
         var logoutReq = Promise.resolve();
-        try {
-            var body = form ? new FormData(form) : new FormData();
-            var csrf = document.querySelector('meta[name="csrf-token"]');
-            if (!form && csrf) {
-                body.append('_token', csrf.getAttribute('content') || '');
-            }
-            var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-            var timer = setTimeout(function () {
-                if (controller) {
-                    controller.abort();
+        if (navigator.onLine !== false) {
+            try {
+                var body = form ? new FormData(form) : new FormData();
+                var csrf = document.querySelector('meta[name="csrf-token"]');
+                if (!form && csrf) {
+                    body.append('_token', csrf.getAttribute('content') || '');
                 }
-            }, 2500);
-            logoutReq = fetch('/logout', {
-                method: 'POST',
-                credentials: 'same-origin',
-                body: body,
-                redirect: 'manual',
-                keepalive: true,
-                headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
-                signal: controller ? controller.signal : undefined
-            }).catch(function () {}).finally(function () {
-                clearTimeout(timer);
-            });
-        } catch (e) {}
+                var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                var timer = setTimeout(function () {
+                    if (controller) {
+                        controller.abort();
+                    }
+                }, 2500);
+                logoutReq = fetch('/logout', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    body: body,
+                    redirect: 'manual',
+                    keepalive: true,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+                    signal: controller ? controller.signal : undefined
+                }).catch(function () {}).finally(function () {
+                    clearTimeout(timer);
+                });
+            } catch (e) {}
+        }
 
         Promise.race([
             logoutReq,
@@ -103,5 +122,13 @@
 
         setTimeout(goLogin, 3000);
     };
+
+    var logoutForm = document.getElementById('ftpos-logout-form');
+    if (logoutForm) {
+        logoutForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            window.ftposLogout(event);
+        });
+    }
 })();
 </script>
