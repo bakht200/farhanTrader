@@ -42,7 +42,9 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/__ftpos_vault_session'", $sw);
         $this->assertStringContainsString('function fallbackDocument()', $sw);
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
-        $this->assertStringContainsString('ftpos-pages-v10', $sw);
+        $this->assertStringContainsString('ftpos-pages-v11', $sw);
+        $this->assertStringContainsString('htmlLooksLikeDashboard', $sw);
+        $this->assertStringContainsString('isCustomerAppPath', $sw);
     }
 
     public function test_client_logout_keeps_the_service_worker_and_page_caches(): void
@@ -67,7 +69,8 @@ class OfflineReliabilityTest extends TestCase
 
         $this->assertNotFalse($prefetch);
         $this->assertStringContainsString("'/login'", $prefetch);
-        $this->assertStringContainsString("ftpos-pages-v10", $prefetch);
+        $this->assertStringContainsString("ftpos-pages-v11", $prefetch);
+        $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));
     }
@@ -285,6 +288,11 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringNotContainsString('Save bill on this device', $panel);
         $this->assertStringNotContainsString('data-tab="add-bill"', $panel);
         $this->assertStringNotContainsString("document.addEventListener('click'", $panel);
+
+        $lists = file_get_contents(resource_path('js/offline/listPages.js'));
+        $this->assertStringContainsString('customers-index', $lists);
+        $this->assertStringContainsString('suppliers-index', $lists);
+        $this->assertStringContainsString('All Customers', $lists);
 
         $branch = $this->makeBranch('Supplier Show Shop');
         $user = $this->makeBranchUser($branch);

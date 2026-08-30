@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v10';
+const CACHE_NAME = 'ftpos-pages-v11';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
 const NAV_TIMEOUT_UNCACHED_MS = 4000;
@@ -108,6 +108,27 @@ function isSupplierAppPath(pathname) {
   return p === '/suppliers' || p.startsWith('/suppliers/');
 }
 
+function isCustomerAppPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/customers' || p.startsWith('/customers/');
+}
+
+function isDashboardPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/' || p === '/dashboard';
+}
+
+function htmlLooksLikeDashboard(buf) {
+  try {
+    const slice = buf.byteLength > 8192 ? buf.slice(0, 8192) : buf;
+    const text = new TextDecoder().decode(slice);
+    return text.includes('data-ftpos-page="dashboard"')
+      || text.includes("here's what's happening with your store");
+  } catch (e) {
+    return false;
+  }
+}
+
 function posCatalogIsEmpty(buf) {
   try {
     const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
@@ -151,11 +172,18 @@ async function firstHtml(paths) {
   return null;
 }
 
-async function offlineNavigationFallback(preferLogin) {
+async function offlineNavigationFallback(requestPath, preferLogin) {
+  const p = (requestPath || '').replace(/\/+$/, '') || '/';
   if (preferLogin) {
-    return (await firstHtml(['/login', '/offline.html', '/dashboard'])) || fallbackDocument();
+    return (await firstHtml(['/login', '/offline.html'])) || fallbackDocument();
   }
-  return (await firstHtml(['/dashboard', '/login', '/offline.html'])) || fallbackDocument();
+  if (isCustomerAppPath(p)) {
+    return (await firstHtml(['/customers', '/dashboard', '/offline.html'])) || fallbackDocument();
+  }
+  if (isSupplierAppPath(p)) {
+    return (await firstHtml(['/suppliers', '/dashboard', '/offline.html'])) || fallbackDocument();
+  }
+  return (await firstHtml([p, '/dashboard', '/login', '/offline.html'])) || fallbackDocument();
 }
 
 async function notifySessionExpired() {
@@ -176,6 +204,9 @@ async function storePage(cache, path, res) {
   // Rebuild response so cache.put works even after redirects
   const buf = await res.clone().arrayBuffer();
   if (isPosPath(path) && posCatalogIsEmpty(buf)) {
+    return false;
+  }
+  if (!isDashboardPath(path) && htmlLooksLikeDashboard(buf)) {
     return false;
   }
   const contentType = res.headers.get('Content-Type') || 'text/html; charset=UTF-8';
@@ -309,7 +340,7 @@ async function handleNavigation(request) {
 
   if (loggedOut && !isLoginPath(path)) {
     if (offline) {
-      return offlineNavigationFallback(true);
+      return offlineNavigationFallback(path, true);
     }
     try {
       const res = await fetchWithTimeout(request, 2500);
@@ -377,7 +408,7 @@ async function handleNavigation(request) {
     return cached;
   }
   if (offline) {
-    return offlineNavigationFallback(false);
+    return offlineNavigationFallback(path, false);
   }
   return fallbackDocument();
 }
@@ -397,22 +428,37 @@ async function matchNavigation(request) {
   ];
   for (const key of candidates) {
     const hit = await cache.match(key, { ignoreSearch: true });
-    if (hit && !responseIsLogin(hit) && !isOfflineHtml(hit)) {
-      return hit;
-    }
     if (hit && isLoginPath(url.pathname)) {
       return hit;
     }
+    if (hit && !responseIsLogin(hit) && !isOfflineHtml(hit)) {
+      if (!isDashboardPath(url.pathname)) {
+        const buf = await hit.clone().arrayBuffer();
+        if (htmlLooksLikeDashboard(buf)) {
+          continue;
+        }
+      }
+      return hit;
+    }
   }
-  const globalHit = await caches.match(request, { ignoreSearch: true });
-  if (globalHit && !isOfflineHtml(globalHit) && (!responseIsLogin(globalHit) || isLoginPath(url.pathname))) {
-    return globalHit;
+  if (isCustomerAppPath(url.pathname)) {
+    const list = await cache.match('/customers', { ignoreSearch: true })
+      || await cache.match(new URL('/customers', self.location.origin).href);
+    if (list && !responseIsLogin(list) && !isOfflineHtml(list)) {
+      const buf = await list.clone().arrayBuffer();
+      if (!htmlLooksLikeDashboard(buf)) {
+        return list;
+      }
+    }
   }
   if (isSupplierAppPath(url.pathname)) {
     const list = await cache.match('/suppliers', { ignoreSearch: true })
       || await cache.match(new URL('/suppliers', self.location.origin).href);
     if (list && !responseIsLogin(list) && !isOfflineHtml(list)) {
-      return list;
+      const buf = await list.clone().arrayBuffer();
+      if (!htmlLooksLikeDashboard(buf)) {
+        return list;
+      }
     }
   }
   if (!loggedOut) {

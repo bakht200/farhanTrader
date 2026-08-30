@@ -3,6 +3,7 @@
         Dashboard
     </x-slot>
 
+    <div data-ftpos-page="dashboard">
     @if(! empty($needsBranchSelection))
         <div class="bg-white rounded-lg shadow p-8 text-center text-gray-600">
             Select a branch to see this store’s dashboard.
@@ -280,4 +281,5 @@
         });
     </script>
     @endif
+    </div>
 </x-app-layout>

@@ -3,6 +3,7 @@
         Customer
     </x-slot>
 
+    <div data-ftpos-page="customers-index">
     <!-- Breadcrumb -->
     <div class="mb-4">
         <nav class="text-sm text-gray-600">
@@ -772,5 +773,6 @@
             });
         }
     </script>
+    </div>
 </x-app-layout>
 

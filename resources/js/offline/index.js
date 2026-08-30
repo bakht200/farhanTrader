@@ -12,8 +12,9 @@ import {
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier, queueOfflineSupplierBill, queueOfflineSupplierPayment, supplierWallet } from './outbox';
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
-import { prefetchAppShells, CACHE_NAME } from './prefetch';
+import { prefetchAppShells, CACHE_NAME, CORE_SHELLS } from './prefetch';
 import { mountOfflineSupplierPanel } from './supplierPanel';
+import { mountOfflineListPages } from './listPages';
 import {
     isLoginPage,
     APP_VERSION,
@@ -150,6 +151,7 @@ async function warmOfflineShells() {
     if (!isOnline()) {
         return;
     }
+    prefetchAppShells(CORE_SHELLS).catch(() => {});
     try {
         if (sessionStorage.getItem(`ftpos_shells_warmed_${APP_VERSION}`)) {
             return;
@@ -157,6 +159,7 @@ async function warmOfflineShells() {
     } catch {
         // ignore
     }
+
     const run = async () => {
         if (!isOnline()) {
             return;
@@ -426,6 +429,7 @@ export async function bootOfflineRuntime() {
 
     await guardAuthenticatedOffline();
     mountOfflineSupplierPanel();
+    mountOfflineListPages().catch(() => {});
     if (isOnline()) {
         probeServerSession().catch(() => {});
     }
