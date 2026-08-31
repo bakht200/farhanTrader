@@ -1657,9 +1657,12 @@
                     `;
                 }
                 const displayedPurchase = purchasePrice + extraPrice;
+                const extraPriceLine = (!isCustom && extraPrice > 0 && purchasePriceVisible)
+                    ? `<div class="text-xs text-gray-500">${formatCurrency(extraPrice)} extra</div>`
+                    : '';
                 const purchasePriceDisplay = isCustom
                     ? '<div class="text-sm text-gray-400">-</div>'
-                    : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(displayedPurchase) : '****'}</div>`;
+                    : `<div class="text-sm text-gray-900">${purchasePriceVisible ? formatCurrency(displayedPurchase) : '****'}</div>${extraPriceLine}`;
                 const remainingStockDisplay = isCustom
                     ? '<div class="text-xs text-blue-500">Custom</div>'
                     : `<div class="text-sm font-medium text-amber-600">${parseFloat(remainingSelectedQty || 0).toFixed(2)} ${unitName}</div>`;
@@ -1672,7 +1675,6 @@
                         <td class="px-4 py-3 whitespace-nowrap">
                             <div>
                                 <div class="font-semibold text-gray-900">${item.name}</div>
-                                ${item.lot_label ? `<div class="text-xs text-gray-500">${item.lot_label}</div>` : ''}
                                 ${stockDisplay}
                         </div>
                         </td>
