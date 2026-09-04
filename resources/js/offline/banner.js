@@ -53,7 +53,7 @@ function removeLegacyBanner() {
     }
 }
 
-function applyPill(pill, pendingEl, { online, pending, syncing }) {
+async function applyPill(pill, pendingEl, { online, pending, syncing }) {
     if (!pill) {
         return;
     }
@@ -71,8 +71,11 @@ function applyPill(pill, pendingEl, { online, pending, syncing }) {
         pill.title = 'Uploading pending changes — click to sync now';
     } else {
         pill.className = `${base} bg-green-600 text-white`;
-        pill.textContent = 'Online';
-        pill.title = 'Connected — click to sync now';
+        const ready = await hasAnyVault().catch(() => false);
+        pill.textContent = ready ? 'Online · Offline ready' : 'Online';
+        pill.title = ready
+            ? 'Connected — this PC can keep working if internet drops'
+            : 'Connected — sign in once online to enable offline on this PC';
     }
 
     if (pendingEl) {
@@ -120,12 +123,12 @@ async function renderStatusPills(extra = {}) {
     const syncing = syncState === 'syncing' || (online && pending > 0);
     const state = { online, pending, syncing };
 
-    applyPill(
+    await applyPill(
         document.getElementById('ftpos-connectivity-status'),
         document.getElementById('ftpos-pending-sync'),
         state
     );
-    applyPill(
+    await applyPill(
         document.getElementById('pos-connectivity-status'),
         document.getElementById('pos-pending-sync'),
         state

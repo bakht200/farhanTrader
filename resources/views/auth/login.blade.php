@@ -13,7 +13,12 @@
     <div class="mb-6">
         <h2 class="text-3xl font-bold text-gray-800 mb-2">Sign In</h2>
         <p class="text-gray-600">Access the Farhan Traders panel using your email and passcode.</p>
-        <p class="mt-2 text-sm text-gray-500">After this PC has signed in once while online, you can open this page and work with Wi‑Fi off. Use <strong>Upload to cloud</strong> when the internet is back.</p>
+        <p class="mt-2 text-sm text-gray-500">Sign in once while online on this PC. After that, if internet drops you can still open login and work offline. Use <strong>Upload to cloud</strong> when the internet is back.</p>
+    </div>
+
+    <div id="ftpos-offline-ready" class="hidden mb-4 rounded-md border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-900">
+        <p class="font-semibold mb-1">Offline ready on this PC</p>
+        <p data-ready-detail>You can sign in with Wi‑Fi off using the same email and password.</p>
     </div>
 
     <div id="ftpos-offline-gate" class="hidden mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

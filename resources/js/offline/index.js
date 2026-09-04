@@ -12,7 +12,7 @@ import {
 import { queueOfflineSale, queueOfflineCustomer, queueOfflineExpense, queueOfflineSupplier, queueOfflineSupplierBill, queueOfflineSupplierPayment, supplierWallet } from './outbox';
 import { db, getMeta, setMeta, pendingOutboxCount } from './db';
 import { onBroadcast } from './broadcast';
-import { prefetchAppShells, CACHE_NAME, CORE_SHELLS, PRECACHE_ROUTES } from './prefetch';
+import { prefetchAppShells, CACHE_NAME, CORE_SHELLS, PRECACHE_ROUTES, precacheBuildAssets } from './prefetch';
 import { mountOfflineSupplierPanel } from './supplierPanel';
 import { mountOfflineListPages } from './listPages';
 import {
@@ -92,7 +92,39 @@ function clearEnrollBanner() {
 
 async function refreshOfflineCatalog() {
     await bootstrap();
+    await precacheBuildAssets().catch(() => {});
     await prefetchAppShells().catch(() => {});
+}
+
+/**
+ * After online login: vault + catalog + JS/CSS + page shells so Wi‑Fi drop is seamless.
+ */
+async function prepareOfflineDevice({ showSuccessToast = true } = {}) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return false;
+    }
+    try {
+        await registerServiceWorker().catch(() => {});
+        const enrolled = await maybeEnrollAfterLogin();
+        if (!enrolled && !(await hasAnyVault())) {
+            return false;
+        }
+        await bootstrap().catch(() => {});
+        await precacheBuildAssets().catch(() => {});
+        await cacheLoginShell();
+        await pinDashboardNow();
+        await prefetchAppShells(CORE_SHELLS).catch(() => {});
+        await setMeta('offline_ready', true);
+        await setMeta('offline_prepared_at', new Date().toISOString());
+        if (showSuccessToast && !enrolled) {
+            showToast('Offline ready — this PC works if internet drops');
+        }
+        clearEnrollBanner();
+        return true;
+    } catch (e) {
+        console.warn('[offline] prepare failed', e);
+        return false;
+    }
 }
 
 async function maybeEnrollAfterLogin() {
@@ -129,7 +161,8 @@ async function openCachedApp(path) {
         const cache = await caches.open(CACHE_NAME);
         for (const candidate of order) {
             const hit = await cache.match(candidate)
-                || await cache.match(new URL(candidate, window.location.origin).href);
+                || await cache.match(new URL(candidate, window.location.origin).href)
+                || await cache.match(candidate, { ignoreSearch: true });
             if (!hit) {
                 continue;
             }
@@ -138,12 +171,13 @@ async function openCachedApp(path) {
                 continue;
             }
             window.location.replace(candidate.startsWith('/__') ? '/dashboard' : candidate);
-            return;
+            return true;
         }
     } catch {
         // ignore
     }
     window.location.replace(path);
+    return false;
 }
 
 async function cacheLoginShell() {
@@ -212,6 +246,7 @@ async function warmOfflineShells() {
     }
     window.__ftposWarmingShells = true;
     try {
+        await precacheBuildAssets().catch(() => {});
         await pinDashboardNow();
         await cacheLoginShell();
         await prefetchAppShells(CORE_SHELLS);
@@ -228,6 +263,7 @@ async function warmOfflineShells() {
                 return;
             }
             try {
+                await precacheBuildAssets().catch(() => {});
                 const result = await prefetchAppShells(PRECACHE_ROUTES);
                 if (result.ok > 0) {
                     try {
@@ -276,6 +312,33 @@ async function refreshCsrfToken() {
     return true;
 }
 
+async function updateLoginOfflineReadyUi() {
+    const ready = document.getElementById('ftpos-offline-ready');
+    const gate = document.getElementById('ftpos-offline-gate');
+    if (!ready && !gate) {
+        return;
+    }
+    try {
+        const emails = await listVaultEmails();
+        if (emails.length) {
+            if (ready) {
+                ready.classList.remove('hidden');
+                const detail = ready.querySelector('[data-ready-detail]');
+                if (detail) {
+                    detail.textContent = `This PC is ready for offline sign-in (${emails.join(', ')}).`;
+                }
+            }
+            if (gate) {
+                gate.classList.add('hidden');
+            }
+        } else if (ready) {
+            ready.classList.add('hidden');
+        }
+    } catch {
+        // ignore
+    }
+}
+
 async function setupLoginForm() {
     const form = document.querySelector('form[action*="login"]');
     if (!form) {
@@ -285,7 +348,10 @@ async function setupLoginForm() {
     const emailInput = form.querySelector('input[name="email"]');
     const passwordInput = form.querySelector('input[name="password"]');
     const gate = document.getElementById('ftpos-offline-gate');
+    const submitBtn = form.querySelector('button[type="submit"]');
     let submitting = false;
+
+    await updateLoginOfflineReadyUi();
 
     const refreshIfVisible = () => {
         if (document.visibilityState === 'visible') {
@@ -299,6 +365,41 @@ async function setupLoginForm() {
     });
     document.addEventListener('visibilitychange', refreshIfVisible);
     refreshCsrfToken().catch(() => {});
+    registerServiceWorker().catch(() => {});
+
+    const setBusy = (busy) => {
+        if (submitBtn) {
+            submitBtn.disabled = !!busy;
+            submitBtn.textContent = busy ? 'Signing in…' : 'Sign In';
+        }
+    };
+
+    async function tryOfflineLogin(email, password) {
+        const hasVault = await hasAnyVault();
+        if (!hasVault) {
+            if (gate) {
+                gate.classList.remove('hidden');
+            }
+            showToast('Offline access not set up. Connect and log in once online.');
+            return false;
+        }
+
+        await unlockOffline(email, password);
+        try {
+            navigator.serviceWorker?.controller?.postMessage({ type: 'CONNECTIVITY', online: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await navigator.serviceWorker?.ready;
+        } catch {
+            // ignore
+        }
+        await notifyServiceWorkerLogin({ vault: true });
+        showToast('Signed in offline');
+        await openCachedApp('/dashboard');
+        return true;
+    }
 
     // Stash password for vault enroll after successful online login
     form.addEventListener('submit', async (event) => {
@@ -307,17 +408,27 @@ async function setupLoginForm() {
             return;
         }
 
-        const email = emailInput?.value || '';
+        const email = (emailInput?.value || '').trim();
         const password = passwordInput?.value || '';
+        if (!email || !password) {
+            showToast('Enter email and password');
+            return;
+        }
+
+        submitting = true;
+        setBusy(true);
+
+        const browserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
         let serverUp = false;
-        try {
-            serverUp = await checkNow();
-        } catch {
-            serverUp = false;
+        if (!browserOffline) {
+            try {
+                serverUp = await checkNow({ timeoutMs: 1500 });
+            } catch {
+                serverUp = false;
+            }
         }
 
         if (serverUp) {
-            submitting = true;
             sessionStorage.setItem(PASSWORD_STASH_KEY, password);
             try {
                 await refreshCsrfToken();
@@ -330,29 +441,7 @@ async function setupLoginForm() {
         }
 
         try {
-            const hasVault = await hasAnyVault();
-            if (!hasVault) {
-                if (gate) {
-                    gate.classList.remove('hidden');
-                }
-                showToast('Offline access not set up. Connect and log in once online.');
-                return;
-            }
-
-            await unlockOffline(email, password);
-            try {
-                navigator.serviceWorker?.controller?.postMessage({ type: 'CONNECTIVITY', online: false });
-            } catch {
-                // ignore
-            }
-            try {
-                await navigator.serviceWorker?.ready;
-            } catch {
-                // ignore
-            }
-            await notifyServiceWorkerLogin({ vault: true });
-            showToast('Signed in offline');
-            await openCachedApp('/dashboard');
+            await tryOfflineLogin(email, password);
         } catch (e) {
             showToast(e.message || 'Offline login failed');
             if (gate) {
@@ -361,10 +450,12 @@ async function setupLoginForm() {
                 const detail = gate.querySelector('[data-gate-detail]');
                 if (detail) {
                     detail.textContent = emails.length
-                        ? e.message
+                        ? (e.message || 'Wrong email or password for offline unlock on this PC.')
                         : 'This device has never signed in while online. Connect to the internet and log in once.';
                 }
             }
+            submitting = false;
+            setBusy(false);
         }
     });
 }
@@ -427,6 +518,8 @@ function exposeApi() {
         unlockOffline,
         hasAnyVault,
         prefetchAppShells,
+        precacheBuildAssets,
+        prepareOfflineDevice,
         logoutAndRedirect,
         redirectToLogin,
         persistLastBranchId,
@@ -491,6 +584,9 @@ export async function bootOfflineRuntime() {
     if (isLoginPage()) {
         setupLoginForm();
         cacheLoginShell();
+        if (isOnline()) {
+            precacheBuildAssets().catch(() => {});
+        }
         return;
     }
 
@@ -511,10 +607,11 @@ export async function bootOfflineRuntime() {
     startSyncScheduler();
 
     if (isOnline()) {
-        maybeEnrollAfterLogin()
-            .then((enrolled) => {
-                if (!enrolled && document.body?.dataset?.ftOfflineBoot !== '0') {
-                    return bootstrap();
+        const justLoggedIn = !!sessionStorage.getItem(PASSWORD_STASH_KEY);
+        prepareOfflineDevice({ showSuccessToast: justLoggedIn })
+            .then((ok) => {
+                if (!ok && document.body?.dataset?.ftOfflineBoot !== '0') {
+                    return bootstrap().catch(() => null);
                 }
                 return null;
             })
@@ -565,6 +662,7 @@ export async function bootOfflineRuntime() {
         syncOnlineOnlyBadges(online);
         if (online) {
             warmOfflineShells();
+            prepareOfflineDevice({ showSuccessToast: false }).catch(() => {});
             probeServerSession().catch(() => {});
         }
     });

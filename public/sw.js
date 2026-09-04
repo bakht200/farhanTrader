@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v13';
+const CACHE_NAME = 'ftpos-pages-v14';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -665,7 +665,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(CACHE_NAME).then(async (cache) => {
         const offline = browserIsOffline();
-        const cachedAsset = await cache.match(req) || await cache.match(url.pathname);
+        const cachedAsset = await cache.match(req)
+          || await cache.match(req, { ignoreSearch: true })
+          || await cache.match(url.pathname)
+          || await cache.match(url.pathname + url.search);
         if (offline && cachedAsset) {
           return cachedAsset;
         }
@@ -673,21 +676,17 @@ self.addEventListener('fetch', (event) => {
         if (url.pathname === '/sw.js' || url.pathname.startsWith('/build/') || url.pathname.endsWith('.js')) {
           try {
             const fresh = await fetch(req, { cache: 'no-store' });
-            if (fresh && fresh.ok && url.pathname.startsWith('/build/')) {
+            if (fresh && fresh.ok && (url.pathname.startsWith('/build/') || url.pathname.endsWith('.css') || url.pathname.endsWith('.js'))) {
               cache.put(req, fresh.clone());
+              cache.put(url.pathname, fresh.clone());
             }
             return fresh;
           } catch (e) {
             if (cachedAsset) {
               return cachedAsset;
             }
-            if (url.pathname.endsWith('.js') || url.pathname.startsWith('/build/')) {
-              return new Response('/* offline */', {
-                status: 200,
-                headers: { 'Content-Type': 'application/javascript' },
-              });
-            }
-            return new Response('', { status: 200 });
+            // Do not return an empty JS stub — that silently kills offline login.
+            return Response.error();
           }
         }
         const cached = await cache.match(req);

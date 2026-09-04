@@ -47,7 +47,8 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/__ftpos_vault_session'", $sw);
         $this->assertStringContainsString('function fallbackDocument()', $sw);
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
-        $this->assertStringContainsString('ftpos-pages-v13', $sw);
+        $this->assertStringContainsString('Do not return an empty JS stub', $sw);
+        $this->assertStringNotContainsString("/* offline */", $sw);
         $this->assertStringContainsString('htmlLooksLikeDashboard', $sw);
         $this->assertStringContainsString('isCustomerAppPath', $sw);
         $this->assertStringContainsString('adoptOldCaches', $sw);
@@ -88,12 +89,17 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/login'", $prefetch);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
-            $this->assertStringContainsString("ftpos-pages-v13", $prefetch);
+            $this->assertStringContainsString("ftpos-pages-v14", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('options.includeSuppliers', $prefetch);
+        $this->assertStringContainsString('precacheBuildAssets', $prefetch);
         $this->assertStringContainsString('uploadPendingToCloud', file_get_contents(resource_path('js/offline/sync.js')));
         $this->assertStringContainsString('Upload to cloud', file_get_contents(resource_path('js/offline/banner.js')));
+        $runtime = file_get_contents(resource_path('js/offline/index.js'));
+        $this->assertStringContainsString('prepareOfflineDevice', $runtime);
+        $this->assertStringContainsString('tryOfflineLogin', $runtime);
+        $this->assertStringContainsString('ftpos-offline-ready', file_get_contents(resource_path('views/auth/login.blade.php')));
     }
 
     public function test_enroll_vault_returns_the_signed_in_users_password_hash(): void

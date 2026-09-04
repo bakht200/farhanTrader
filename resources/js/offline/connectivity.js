@@ -78,14 +78,14 @@ function browserLooksSlow() {
     return false;
 }
 
-async function probe() {
+async function probe(timeoutMs = PROBE_TIMEOUT_MS) {
     if (!browserReportsOnline()) {
         return { ok: false, ms: 0, slow: true };
     }
 
     const controller = new AbortController();
     const started = performance.now();
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(PROBE_URL, {
             method: 'GET',
@@ -108,7 +108,7 @@ function canPromoteToOnline() {
     return Date.now() >= holdOfflineUntil;
 }
 
-async function evaluate({ instant = false } = {}) {
+async function evaluate({ instant = false, timeoutMs = PROBE_TIMEOUT_MS } = {}) {
     if (probing) {
         return status === 'online';
     }
@@ -121,7 +121,7 @@ async function evaluate({ instant = false } = {}) {
             return false;
         }
 
-        const result = await probe();
+        const result = await probe(timeoutMs);
         if (!result.ok) {
             consecutiveFastHits = 0;
             requireStableRecovery = true;
@@ -156,9 +156,9 @@ function scheduleBackgroundCheck(delayMs = 300) {
     }, delayMs);
 }
 
-export async function checkNow() {
+export async function checkNow(options = {}) {
     consecutiveFastHits = 0;
-    return evaluate({ instant: true });
+    return evaluate({ instant: true, timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS });
 }
 
 function restartHeartbeat() {

@@ -6,7 +6,7 @@
 import { isOnline } from './connectivity';
 import { db } from './db';
 
-export const CACHE_NAME = 'ftpos-pages-v13';
+export const CACHE_NAME = 'ftpos-pages-v14';
 
 export const CORE_SHELLS = [
     '/dashboard',
@@ -183,6 +183,94 @@ async function collectSupplierPageUrls() {
     } catch {
         return [];
     }
+}
+
+/**
+ * Cache Vite build assets so login/POS JS still runs when the network drops.
+ * Without this, the service worker may serve an empty JS stub and offline login dies.
+ */
+export async function precacheBuildAssets() {
+    if (!isOnline() || !('caches' in window)) {
+        return { ok: 0, failed: 0 };
+    }
+
+    const cache = await caches.open(CACHE_NAME);
+    const urls = new Set();
+
+    try {
+        document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach((el) => {
+            const raw = el.getAttribute('src') || el.getAttribute('href');
+            if (!raw) {
+                return;
+            }
+            try {
+                const u = new URL(raw, window.location.origin);
+                if (u.origin === window.location.origin) {
+                    urls.add(u.pathname + u.search);
+                    urls.add(u.href);
+                }
+            } catch {
+                // ignore
+            }
+        });
+    } catch {
+        // ignore
+    }
+
+    try {
+        const manifestRes = await fetch('/build/manifest.json', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+        if (manifestRes.ok) {
+            await cache.put('/build/manifest.json', manifestRes.clone());
+            await cache.put(new URL('/build/manifest.json', window.location.origin).href, manifestRes.clone());
+            const manifest = await manifestRes.json();
+            Object.values(manifest || {}).forEach((entry) => {
+                if (entry?.file) {
+                    urls.add(`/build/${entry.file}`);
+                }
+                (entry?.css || []).forEach((css) => urls.add(`/build/${css}`));
+                (entry?.assets || []).forEach((asset) => urls.add(`/build/${asset}`));
+            });
+        }
+    } catch {
+        // ignore
+    }
+
+    urls.add('/logo.png');
+    urls.add('/offline.html');
+
+    let ok = 0;
+    let failed = 0;
+    for (const url of urls) {
+        if (!isOnline()) {
+            break;
+        }
+        try {
+            const res = await fetch(url, {
+                credentials: 'same-origin',
+                cache: 'no-store',
+            });
+            if (!res.ok) {
+                failed += 1;
+                continue;
+            }
+            await cache.put(url, res.clone());
+            try {
+                const abs = new URL(url, window.location.origin).href;
+                await cache.put(abs, res.clone());
+                await cache.put(new URL(url, window.location.origin).pathname, res.clone());
+            } catch {
+                // ignore
+            }
+            ok += 1;
+        } catch {
+            failed += 1;
+        }
+    }
+
+    return { ok, failed, total: urls.size };
 }
 
 /**
