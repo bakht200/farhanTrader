@@ -49,8 +49,10 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
         $this->assertStringContainsString('Do not return an empty JS stub', $sw);
         $this->assertStringNotContainsString("/* offline */", $sw);
-        $this->assertStringContainsString('ftpos-pages-v15', $sw);
-        $this->assertStringContainsString('pass the redirect through so Laravel can send the browser to POS', $sw);
+        $this->assertStringContainsString('ftpos-pages-v16', $sw);
+        $this->assertStringContainsString('resolveOnlineRedirect', $sw);
+        $this->assertStringContainsString('Do not treat opaque redirects as login', $sw);
+        $this->assertStringContainsString('Follow Laravel redirects while online', $sw);
         $this->assertStringContainsString('Only dashboard itself may fall back to the app shell', $sw);
         $this->assertStringContainsString('isCustomerAppPath', $sw);
         $this->assertStringContainsString('adoptOldCaches', $sw);
@@ -91,7 +93,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/login'", $prefetch);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
-            $this->assertStringContainsString("ftpos-pages-v15", $prefetch);
+            $this->assertStringContainsString("ftpos-pages-v16", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('options.includeSuppliers', $prefetch);

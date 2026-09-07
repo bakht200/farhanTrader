@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v15';
+const CACHE_NAME = 'ftpos-pages-v16';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -388,12 +388,64 @@ function redirectGoesToLogin(res) {
   }
   try {
     const loc = res.headers.get('Location');
+    // Do not treat opaque redirects as login — order edit → POS is also a redirect.
     if (!loc) {
-      return res.type === 'opaqueredirect';
+      return false;
     }
     return isLoginPath(new URL(loc, self.location.origin).pathname);
   } catch (e) {
     return false;
+  }
+}
+
+/**
+ * Follow Laravel redirects while online (e.g. /orders/{id}/edit → /sales/pos?edit_order_id=).
+ * Returns a browser-followable Response.redirect so the address bar updates correctly.
+ */
+async function resolveOnlineRedirect(request, firstRes) {
+  try {
+    let loc = null;
+    try {
+      loc = firstRes && firstRes.headers ? firstRes.headers.get('Location') : null;
+    } catch (e) {
+      loc = null;
+    }
+
+    if (loc) {
+      const nextUrl = new URL(loc, self.location.origin);
+      if (isLoginPath(nextUrl.pathname)) {
+        return null;
+      }
+      return Response.redirect(nextUrl.href, 302);
+    }
+
+    // Opaque / unreadable Location: follow redirects on a fresh GET and send the browser there.
+    const followed = await fetch(request.url, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'follow',
+      headers: { Accept: 'text/html,application/xhtml+xml,*/*' },
+    });
+    if (!followed || !followed.ok) {
+      return null;
+    }
+    if (responseIsLogin(followed) || isOfflineHtml(followed)) {
+      return null;
+    }
+    const finalUrl = followed.url || request.url;
+    if (finalUrl && finalUrl !== request.url) {
+      try {
+        const finalPath = new URL(finalUrl).pathname;
+        if (isLoginPath(finalPath)) {
+          return null;
+        }
+      } catch (e) {}
+      return Response.redirect(finalUrl, 302);
+    }
+    return followed;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -508,11 +560,15 @@ async function handleNavigation(request) {
       return serveLoginHtml();
     }
     if (isRedirectResponse(res)) {
-      // Online: pass the redirect through so Laravel can send the browser to POS
-      // (e.g. /orders/{id}/edit → /sales/pos?edit_order_id=…). Returning a cached
-      // dashboard shell here left the URL on /edit while showing Dashboard.
+      // Online: follow Laravel redirects (order edit → POS). Never paint login HTML
+      // over /orders/{id}/edit just because the first hop was a 302.
       if (!offline) {
-        return res;
+        const resolved = await resolveOnlineRedirect(request, res);
+        if (resolved) {
+          return resolved;
+        }
+        // Last resort: do not serve login for unknown redirects while a session may exist.
+        return fallbackDocument();
       }
       if (cacheUsable) {
         return cached;

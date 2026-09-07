@@ -24,7 +24,7 @@
                     </svg>
                     Print Bill
                 </button>
-                <a href="{{ route('orders.edit', $order) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md">Edit</a>
+                <a href="{{ route('sales.pos.index', ['edit_order_id' => $order->id]) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md">Edit</a>
                 <a href="{{ route('orders.index') }}" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-md">Back</a>
             </div>
         </div>
