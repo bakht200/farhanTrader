@@ -686,11 +686,13 @@ class ProductController extends Controller
         DB::beginTransaction();
         try {
             $product->update($validated);
-            if (! $addingReceived) {
-                $product->setBranchStock($branchStockQty);
-            }
             $product->setBranchSellingType($validated['selling_type'] ?? 'both');
-            $this->applyReceivedStock($request, $product->fresh(['productUnits.unit', 'currentBranchStock']));
+            $fresh = $product->fresh(['productUnits.unit', 'currentBranchStock']);
+            if ($addingReceived) {
+                $this->applyReceivedStock($request, $fresh);
+            } else {
+                $this->applyStockQuantityChange($fresh, $branchStockQty);
+            }
             
             // Update ProductUnit records
             // First, update or create base unit ProductUnit
@@ -1460,6 +1462,7 @@ class ProductController extends Controller
         }
 
         $addingReceived = (float) $request->input('add_received_qty', 0) > 0;
+        $targetStockQty = (float) ($validated['stock_quantity'] ?? 0);
         $overrides = [
             'display_name' => $validated['name'],
             'purchase_price' => $validated['purchase_price'] ?? null,
@@ -1468,15 +1471,17 @@ class ProductController extends Controller
             'wholesale_price' => $validated['wholesale_price'] ?? null,
             'selling_type' => $validated['selling_type'] ?? 'both',
         ];
-        if (! $addingReceived) {
-            $overrides['stock_quantity'] = (float) ($validated['stock_quantity'] ?? 0);
-        }
 
         try {
-            DB::transaction(function () use ($request, $product, $overrides) {
+            DB::transaction(function () use ($request, $product, $overrides, $addingReceived, $targetStockQty) {
                 app(BranchStockService::class)->setOverrides($product, $overrides);
                 $product->unsetRelation('currentBranchStock');
-                $this->applyReceivedStock($request, $product->fresh(['productUnits.unit', 'currentBranchStock']));
+                $fresh = $product->fresh(['productUnits.unit', 'currentBranchStock']);
+                if ($addingReceived) {
+                    $this->applyReceivedStock($request, $fresh);
+                } else {
+                    $this->applyStockQuantityChange($fresh, $targetStockQty);
+                }
                 $this->syncLotSellingForCurrentRate($product, $overrides);
             });
 
@@ -1505,6 +1510,45 @@ class ProductController extends Controller
             (float) ($prices['purchase_price'] ?? $product->purchase_price ?? 0),
             $prices
         );
+    }
+
+    /**
+     * Set branch stock to an absolute total (increase or reduce) and keep lots in sync.
+     */
+    protected function applyStockQuantityChange(Product $product, float $newQty): void
+    {
+        $newQty = max(0, $newQty);
+        $current = (float) $product->currentStock();
+        $delta = round($newQty - $current, 6);
+
+        if (abs($delta) < 0.000001) {
+            return;
+        }
+
+        if ($delta > 0) {
+            $product->incrementStock($delta, null, [
+                'source_type' => 'product_edit',
+                'source_id' => $product->id,
+                'reason' => 'stock_correction',
+            ]);
+
+            try {
+                app(ProductLotService::class)->addReceivedQuantity($product, $delta);
+            } catch (\InvalidArgumentException $e) {
+                throw ValidationException::withMessages([
+                    'stock_quantity' => $e->getMessage().' Use Add received stock and choose a lot to increase, or lower the total to correct a mistake.',
+                ]);
+            }
+
+            return;
+        }
+
+        $product->decrementStock(abs($delta), null, [
+            'source_type' => 'product_edit',
+            'source_id' => $product->id,
+            'reason' => 'stock_correction',
+        ]);
+        app(ProductLotService::class)->decrementForSale($product, abs($delta), null);
     }
 
     /**

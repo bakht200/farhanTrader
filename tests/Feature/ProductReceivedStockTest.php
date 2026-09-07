@@ -506,6 +506,88 @@ class ProductReceivedStockTest extends TestCase
         $this->assertSame('MEETA SODA RECEIVE', $product->fresh()->getAttributes()['name']);
     }
 
+    public function test_edit_product_can_reduce_stock_quantity(): void
+    {
+        $branch = $this->makeBranch('STOCK REDUCE');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, [
+            'name' => 'Islamabad Oil',
+            'purchase_price' => 100,
+            'retail_price' => 120,
+            'selling_price' => 120,
+            'selling_type' => 'retail',
+        ], 8);
+
+        $lot = ProductLot::query()->create([
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 8,
+            'purchase_price' => 100,
+            'extra_price' => 0,
+            'retail_price' => 120,
+            'wholesale_price' => 120,
+            'selling_price' => 120,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($user);
+        $this->put(route('products.update', $product), $this->editPayload($product, [
+            'stock_quantity' => 3,
+        ]))->assertRedirect();
+
+        $this->assertEquals(3.0, (float) $product->fresh()->currentStock($branch->id));
+        $this->assertEquals(3.0, (float) $lot->fresh()->quantity);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $product->id,
+            'branch_id' => $branch->id,
+            'reason' => 'stock_correction',
+            'delta' => -5,
+        ]);
+    }
+
+    public function test_edit_product_can_increase_stock_quantity(): void
+    {
+        $branch = $this->makeBranch('STOCK INCREASE');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, [
+            'name' => 'Islamabad Oil Up',
+            'purchase_price' => 100,
+            'retail_price' => 120,
+            'selling_price' => 120,
+            'selling_type' => 'retail',
+        ], 8);
+
+        $lot = ProductLot::query()->create([
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 8,
+            'purchase_price' => 100,
+            'extra_price' => 0,
+            'retail_price' => 120,
+            'wholesale_price' => 120,
+            'selling_price' => 120,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($user);
+        $this->put(route('products.update', $product), $this->editPayload($product, [
+            'stock_quantity' => 13,
+        ]))->assertRedirect();
+
+        $this->assertEquals(13.0, (float) $product->fresh()->currentStock($branch->id));
+        $this->assertEquals(13.0, (float) $lot->fresh()->quantity);
+        $this->assertDatabaseHas('inventory_movements', [
+            'product_id' => $product->id,
+            'branch_id' => $branch->id,
+            'reason' => 'stock_correction',
+            'delta' => 5,
+        ]);
+    }
+
     /**
      * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>

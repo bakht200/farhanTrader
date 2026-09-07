@@ -153,25 +153,37 @@
                     @enderror
                 </div>
 
-                <!-- Current stock (do not type a new total here — add received qty below) -->
+                <!-- Stock quantity — edit to increase or reduce -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">
-                        Current stock
+                    <label for="stock_quantity" class="block text-sm font-medium text-gray-700 mb-2">
+                        Stock quantity
+                        @if(!empty($baseUnitLabel) || $product->unit)
+                            <span class="text-xs font-normal text-gray-500">({{ $baseUnitLabel ?? ($product->unit->short_name ?? '') }})</span>
+                        @endif
                     </label>
-                    <input type="hidden" id="stock_quantity" name="stock_quantity" value="{{ old('stock_quantity', $product->stock_quantity) }}">
-                    <div class="w-full px-4 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-900">
-                        {{ number_format((float) $product->stock_quantity, 2) }} {{ $baseUnitLabel ?? ($product->unit->short_name ?? '') }}
-                        @if(isset($receiveUnits) && $receiveUnits->count() > 1)
+                    <input type="number"
+                           id="stock_quantity"
+                           name="stock_quantity"
+                           value="{{ old('stock_quantity', $product->stock_quantity) }}"
+                           min="0"
+                           step="any"
+                           required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500">
+                    @if(isset($receiveUnits) && $receiveUnits->count() > 1)
+                        <p class="mt-1 text-xs text-gray-500">
+                            Now:
+                            {{ number_format((float) $product->stock_quantity, 2) }} {{ $baseUnitLabel ?? ($product->unit->short_name ?? '') }}
                             @foreach($receiveUnits as $receiveUnit)
                                 @if((int) $receiveUnit['id'] !== (int) ($baseUnitId ?? $product->base_unit_id) && (float) $receiveUnit['units_per_base'] > 0)
-                                    <span class="text-sm text-gray-500">
-                                        · {{ number_format((float) $product->stock_quantity * (float) $receiveUnit['units_per_base'], 2) }} {{ $receiveUnit['short_name'] }}
-                                    </span>
+                                    · {{ number_format((float) $product->stock_quantity * (float) $receiveUnit['units_per_base'], 2) }} {{ $receiveUnit['short_name'] }}
                                 @endif
                             @endforeach
-                        @endif
-                    </div>
-                    <p class="mt-1 text-xs text-gray-500">To add more stock at the same price, use Add received stock below. Do not overwrite this total.</p>
+                        </p>
+                    @endif
+                    <p class="mt-1 text-xs text-gray-500">
+                        Type the correct total to increase or reduce stock. Example: if you added 5 by mistake and it should be 3, change this to 3 and save.
+                        To add more at the same purchase rate without changing the total yourself, use Add received stock below.
+                    </p>
                     @error('stock_quantity')
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
