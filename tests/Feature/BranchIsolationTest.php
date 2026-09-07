@@ -793,6 +793,30 @@ class BranchIsolationTest extends TestCase
         $this->assertDatabaseHas('products', ['id' => $product->id, 'name' => 'MEETA SODA']);
     }
 
+    public function test_branch_user_can_delete_own_product_even_with_inventory_movements(): void
+    {
+        $ashraf = $this->makeBranch('ASHRAF ROAD');
+        $ashrafUser = $this->makeBranchUser($ashraf);
+        $product = $this->makeProductForBranch($ashraf, ['name' => 'TEMP DELETE ME'], 5);
+
+        \App\Models\InventoryMovement::query()->create([
+            'branch_id' => $ashraf->id,
+            'product_id' => $product->id,
+            'delta' => 5,
+            'qty_before' => 0,
+            'qty_after' => 5,
+            'source_type' => 'manual',
+            'reason' => 'test seed',
+        ]);
+
+        $this->actingAs($ashrafUser);
+        $this->delete(route('products.destroy', $product))
+            ->assertRedirect(route('products.index'));
+
+        $this->assertDatabaseMissing('products', ['id' => $product->id]);
+        $this->assertDatabaseMissing('inventory_movements', ['product_id' => $product->id]);
+    }
+
     public function test_branch_owned_product_and_supplier_do_not_appear_on_phandu(): void
     {
         $phandu = \App\Models\Branch::query()->findOrFail(1);

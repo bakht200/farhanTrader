@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
@@ -1095,11 +1096,39 @@ class ProductController extends Controller
     {
         $this->authorize('delete', $product);
 
-        // Delete image if exists
-        if ($product->image) {
-            Storage::disk('public')->delete($product->image);
+        try {
+            DB::transaction(function () use ($product) {
+                if ($product->image) {
+                    Storage::disk('public')->delete($product->image);
+                }
+
+                // inventory_movements uses restrictOnDelete — clear history first.
+                if (Schema::hasTable('inventory_movements')) {
+                    DB::table('inventory_movements')->where('product_id', $product->id)->delete();
+                }
+
+                if (Schema::hasTable('product_lots')) {
+                    $lotIds = DB::table('product_lots')->where('product_id', $product->id)->pluck('id');
+                    if ($lotIds->isNotEmpty()) {
+                        if (Schema::hasColumn('sale_items', 'product_lot_id')) {
+                            DB::table('sale_items')->whereIn('product_lot_id', $lotIds)->update(['product_lot_id' => null]);
+                        }
+                        if (Schema::hasColumn('supplier_bill_items', 'product_lot_id')) {
+                            DB::table('supplier_bill_items')->whereIn('product_lot_id', $lotIds)->update(['product_lot_id' => null]);
+                        }
+                        DB::table('product_lots')->where('product_id', $product->id)->delete();
+                    }
+                }
+
+                $product->delete();
+            });
+        } catch (\Throwable $e) {
+            report($e);
+
+            return redirect()->route('products.index')
+                ->with('error', 'Could not delete this product because it is still linked to sales or stock history.');
         }
-        $product->delete();
+
         return redirect()->route('products.index')->with('success', 'Product deleted successfully.');
     }
 
