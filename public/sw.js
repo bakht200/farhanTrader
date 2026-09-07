@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v14';
+const CACHE_NAME = 'ftpos-pages-v15';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -508,13 +508,16 @@ async function handleNavigation(request) {
       return serveLoginHtml();
     }
     if (isRedirectResponse(res)) {
+      // Online: pass the redirect through so Laravel can send the browser to POS
+      // (e.g. /orders/{id}/edit → /sales/pos?edit_order_id=…). Returning a cached
+      // dashboard shell here left the URL on /edit while showing Dashboard.
+      if (!offline) {
+        return res;
+      }
       if (cacheUsable) {
         return cached;
       }
-      if (offline) {
-        return offlineNavigationFallback(path, false);
-      }
-      return fallbackDocument();
+      return offlineNavigationFallback(path, false);
     }
     if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
       loggedOut = false;
@@ -582,7 +585,9 @@ async function matchNavigation(request) {
       }
     }
   }
-  if (!loggedOut) {
+  // Only dashboard itself may fall back to the app shell. Using the shell for
+  // /orders/.../edit made online redirects paint Dashboard under the edit URL.
+  if (isDashboardPath(url.pathname) && !loggedOut) {
     const shell = await cache.match(APP_SHELL_PATH)
       || await cache.match('/dashboard', { ignoreSearch: true })
       || await cache.match(new URL('/dashboard', self.location.origin).href);
