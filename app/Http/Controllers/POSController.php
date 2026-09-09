@@ -10,6 +10,7 @@ use App\Models\Unit;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Services\CustomerBalanceService;
+use App\Services\SaleEditStockService;
 use App\Services\UnitConversionService;
 use App\Support\BranchRules;
 use App\Support\CurrentBranch;
@@ -135,9 +136,11 @@ class POSController extends Controller
                         return [
                             'id' => $item->id,
                             'product_id' => $item->product_id,
+                            'product_lot_id' => $item->product_lot_id,
                             'product_name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
                             'name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
                             'quantity' => $item->quantity,
+                            'quantity_in_base_unit' => $item->quantity_in_base_unit ?? $item->quantity,
                             'unit_price' => $item->unit_price,
                             'selling_price' => $item->unit_price,
                             'discount' => $item->discount ?? 0,
@@ -210,6 +213,16 @@ class POSController extends Controller
         $subtotal = 0;
         $totalDiscount = 0;
 
+        // When editing a completed sale, credit its lines so stock checks are not
+        // applied on top of quantities already reserved by that invoice.
+        $editStockCredits = ['products' => [], 'lots' => []];
+        if (! empty($validated['order_id'])) {
+            $editingForCredit = Sale::with('items')->find($validated['order_id']);
+            if ($editingForCredit) {
+                $editStockCredits = app(SaleEditStockService::class)->availabilityCredits($editingForCredit);
+            }
+        }
+
         foreach ($request->input('items', []) as $item) {
             $isCustom = isset($item['is_custom']) && $item['is_custom'] == '1';
             
@@ -243,13 +256,15 @@ class POSController extends Controller
 
                     return redirect()->back()->with('error', $e->getMessage());
                 }
-                $availableInBaseUnit = (float) ($product->stock_quantity ?? 0);
+                $availableInBaseUnit = (float) ($product->stock_quantity ?? 0)
+                    + (float) ($editStockCredits['products'][$product->id] ?? 0);
                 $lotId = ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null;
                 if ($lotId) {
                     $lotQty = (float) (\App\Models\ProductLot::query()
                         ->where('id', $lotId)
                         ->where('product_id', $product->id)
-                        ->value('quantity') ?? 0);
+                        ->value('quantity') ?? 0)
+                        + (float) ($editStockCredits['lots'][$lotId] ?? 0);
                     $availableInBaseUnit = min($availableInBaseUnit, $lotQty);
                 }
 
@@ -338,28 +353,14 @@ class POSController extends Controller
             
             if ($isEditing) {
                 // Update existing sale/order
-                $sale = Sale::with('items')->find($validated['order_id']);
+                $sale = Sale::with('items.product')->find($validated['order_id']);
                 
                 if (!$sale) {
                     throw new \Exception('Order not found for editing.');
                 }
-                
-                // Restore stock for all existing items
-                foreach ($sale->items as $oldItem) {
-                    if ($oldItem->product_id && $oldItem->product) {
-                        $quantityToRestore = $oldItem->quantity_in_base_unit ?? $oldItem->quantity;
-                        $oldItem->product->incrementStock($quantityToRestore, null, [
-                            'source_type' => 'sale',
-                            'source_id' => $sale->id,
-                            'reason' => 'POS edit restore',
-                        ]);
-                        app(\App\Services\ProductLotService::class)->restoreForSale(
-                            $oldItem->product,
-                            (float) $quantityToRestore,
-                            $oldItem->product_lot_id ? (int) $oldItem->product_lot_id : null
-                        );
-                    }
-                }
+
+                // Restore only if this sale previously deducted stock (completed).
+                app(SaleEditStockService::class)->restoreSaleItems($sale, null, 'POS edit restore');
                 
                 // Delete all existing items
                 $sale->items()->delete();
@@ -397,7 +398,8 @@ class POSController extends Controller
             }
             
             // Log payment for sale (if customer and payment amount > 0)
-            if ($sale->customer_id && $paidAmount > 0) {
+            // Skip on edit — re-saving an invoice must not invent a second cash receipt.
+            if (! $isEditing && $sale->customer_id && $paidAmount > 0) {
                 \App\Models\CustomerPaymentLog::create([
                     'customer_id' => $sale->customer_id,
                     'user_id' => auth()->id(),

@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v16';
+const CACHE_NAME = 'ftpos-pages-v17';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;

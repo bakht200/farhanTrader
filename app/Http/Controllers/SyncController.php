@@ -21,6 +21,7 @@ use App\Models\SupplierTransaction;
 use App\Models\Unit;
 use App\Models\UnitConversion;
 use App\Models\User;
+use App\Services\SaleEditStockService;
 use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
@@ -464,6 +465,24 @@ class SyncController extends Controller
             }
         }
 
+        $editStock = app(SaleEditStockService::class);
+        $editingSale = null;
+        $editStockCredits = ['products' => [], 'lots' => []];
+
+        if (! empty($payload['order_id'])) {
+            $editingSale = Sale::withoutGlobalScopes()
+                ->with('items.product')
+                ->where('branch_id', $branchId)
+                ->whereKey((int) $payload['order_id'])
+                ->first();
+
+            if (! $editingSale) {
+                throw new \RuntimeException('Sale to edit was not found on this branch.');
+            }
+
+            $editStockCredits = $editStock->availabilityCredits($editingSale);
+        }
+
         $subtotal = 0;
         $totalDiscount = 0;
         $prepared = [];
@@ -495,13 +514,15 @@ class SyncController extends Controller
                 }
                 $unitId = ! empty($line['unit_id']) ? (int) $line['unit_id'] : null;
                 $qtyInBase = $conversion->toBaseQuantity($product, $qty, $unitId);
-                $available = (float) ($product->currentStock($branchId) ?? 0);
+                $available = (float) ($product->currentStock($branchId) ?? 0)
+                    + (float) ($editStockCredits['products'][$product->id] ?? 0);
                 if ($lotId) {
                     $lotQty = (float) (ProductLot::query()
                         ->where('id', $lotId)
                         ->where('product_id', $product->id)
                         ->where('branch_id', $branchId)
-                        ->value('quantity') ?? 0);
+                        ->value('quantity') ?? 0)
+                        + (float) ($editStockCredits['lots'][$lotId] ?? 0);
                     $available = min($available, $lotQty);
                 }
                 if ($qtyInBase > $available + 0.000001) {
@@ -531,23 +552,41 @@ class SyncController extends Controller
         }
 
         $customerName = trim((string) ($payload['customer_name'] ?? 'Walk-in Customer')) ?: 'Walk-in Customer';
-        $saleNumber = Sale::generateSaleNumber('SALE', $branchId);
 
-        $sale = Sale::create([
-            'branch_id' => $branchId,
-            'sale_number' => $saleNumber,
-            'customer_id' => $payload['customer_id'] ?? null,
-            'user_id' => $user->id,
-            'sale_date' => now()->toDateString(),
-            'subtotal' => $subtotal,
-            'tax_amount' => 0,
-            'discount_amount' => $totalDiscount,
-            'total_amount' => $totalAmount,
-            'paid_amount' => $paidAmount,
-            'payment_status' => $paymentStatus,
-            'status' => 'completed',
-            'notes' => $payload['comment'] ?? "Customer: {$customerName}",
-        ]);
+        if ($editingSale) {
+            $editStock->restoreSaleItems($editingSale, $branchId, 'offline sync edit restore');
+            $editingSale->items()->delete();
+            $editingSale->update([
+                'customer_id' => $payload['customer_id'] ?? null,
+                'subtotal' => $subtotal,
+                'tax_amount' => 0,
+                'discount_amount' => $totalDiscount,
+                'total_amount' => $totalAmount,
+                'paid_amount' => $paidAmount,
+                'payment_status' => $paymentStatus,
+                'status' => 'completed',
+                'notes' => $payload['comment'] ?? "Customer: {$customerName}",
+            ]);
+            $sale = $editingSale->fresh();
+            $saleNumber = $sale->sale_number;
+        } else {
+            $saleNumber = Sale::generateSaleNumber('SALE', $branchId);
+            $sale = Sale::create([
+                'branch_id' => $branchId,
+                'sale_number' => $saleNumber,
+                'customer_id' => $payload['customer_id'] ?? null,
+                'user_id' => $user->id,
+                'sale_date' => now()->toDateString(),
+                'subtotal' => $subtotal,
+                'tax_amount' => 0,
+                'discount_amount' => $totalDiscount,
+                'total_amount' => $totalAmount,
+                'paid_amount' => $paidAmount,
+                'payment_status' => $paymentStatus,
+                'status' => 'completed',
+                'notes' => $payload['comment'] ?? "Customer: {$customerName}",
+            ]);
+        }
 
         foreach ($prepared as $row) {
             $line = $row['line'];
@@ -579,7 +618,7 @@ class SyncController extends Controller
                 $product->decrementStock($row['qty_in_base'], $branchId, [
                     'source_type' => 'sale',
                     'source_id' => $sale->id,
-                    'reason' => 'offline sync sale',
+                    'reason' => $editingSale ? 'offline sync edit sale' : 'offline sync sale',
                     'idempotency_key' => 'sync-sale-'.$uuid.'-'.$product->id.($row['lot_id'] ? '-lot-'.$row['lot_id'] : ''),
                 ]);
                 app(\App\Services\ProductLotService::class)->decrementForSale(
@@ -599,6 +638,7 @@ class SyncController extends Controller
             'status' => 'ok',
             'server_id' => $sale->id,
             'sale_number' => $saleNumber,
+            'is_edit' => (bool) $editingSale,
         ];
     }
 

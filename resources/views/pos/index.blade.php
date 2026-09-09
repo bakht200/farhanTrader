@@ -2150,6 +2150,16 @@
                 const offline = window.FTOffline && window.FTOffline.isOnline && !window.FTOffline.isOnline();
                 if (offline && window.FTOffline.queueOfflineSale) {
                     const payload = {
+                        order_id: (orderId && orderId > 0) ? orderId : null,
+                        previous_items: (orderId && orderId > 0 && editOrder && editOrder.items)
+                            ? editOrder.items.map((item) => ({
+                                product_id: item.product_id || null,
+                                product_lot_id: item.product_lot_id || item.lot_id || null,
+                                quantity: item.quantity_in_base_unit ?? item.quantity,
+                                quantity_in_base_unit: item.quantity_in_base_unit ?? item.quantity,
+                                is_custom: (!item.product_id) ? '1' : '0',
+                            }))
+                            : [],
                         customer_id: formData.get('customer_id') || null,
                         customer_name: formData.get('customer_name') || 'Walk-in Customer',
                         payment_method: formData.get('payment_method') || 'cash',

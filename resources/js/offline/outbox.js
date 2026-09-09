@@ -76,76 +76,137 @@ export async function markOutboxConflict(clientUuid, conflict) {
 }
 
 /**
+ * Apply +/- stock for offline catalog items (optimistic local mirror).
+ */
+async function applyOfflineStockDelta(items, sign, branchId) {
+    const now = new Date().toISOString();
+    for (const item of items || []) {
+        if (item.is_custom == '1' || item.is_custom === true || !item.product_id) {
+            continue;
+        }
+        const product = await db.products.get(Number(item.product_id));
+        if (!product) {
+            continue;
+        }
+        const qty = Number(item.quantity_in_base_unit ?? item.quantity) || 0;
+        if (qty <= 0) {
+            continue;
+        }
+        const next = Math.max(0, Number(product.stock_quantity || 0) + (sign * qty));
+        await db.products.update(product.id, {
+            stock_quantity: next,
+            updated_at: now,
+        });
+        const lotId = Number(item.product_lot_id || item.lot_id || 0);
+        if (lotId && db.productLots) {
+            const lot = await db.productLots.get(lotId);
+            if (lot) {
+                await db.productLots.put({
+                    ...lot,
+                    quantity: Math.max(0, Number(lot.quantity || 0) + (sign * qty)),
+                    updated_at: now,
+                });
+            }
+        }
+        if (branchId) {
+            const key = [Number(branchId), Number(item.product_id)];
+            const stock = await db.branchStocks.get(key);
+            if (stock) {
+                await db.branchStocks.put({
+                    ...stock,
+                    quantity: Math.max(0, Number(stock.quantity || 0) + (sign * qty)),
+                });
+            }
+        }
+    }
+}
+
+/**
  * Queue an offline POS sale and mirror it locally.
+ * When order_id is set, restores the prior invoice qty before applying the new cart
+ * so edits do not double-deduct stock (online or after sync).
  */
 export async function queueOfflineSale(salePayload, meta = {}) {
     const clientUuid = uuid();
     const branchId = await offlineBranchId(meta.branchId);
     const now = new Date().toISOString();
+    const orderId = Number(salePayload.order_id || 0);
 
-    const localSale = {
-        id: `local-${clientUuid}`,
-        client_uuid: clientUuid,
-        branch_id: branchId,
-        customer_id: salePayload.customer_id || null,
-        sale_date: now.slice(0, 10),
-        payment_method: salePayload.payment_method,
-        paid_amount: salePayload.paid_amount,
-        notes: salePayload.comment || salePayload.customer_name || '',
-        status: 'completed',
-        payment_status: 'pending',
-        sync_status: 'pending',
-        items: salePayload.items || [],
-        updated_at: now,
-        created_at: now,
-    };
-
-    await db.sales.put(localSale);
-
-    // Optimistic stock decrement for non-custom items
-    for (const item of salePayload.items || []) {
-        if (item.is_custom == '1' || item.is_custom === true || !item.product_id) {
-            continue;
+    if (orderId > 0) {
+        let previousItems = Array.isArray(salePayload.previous_items) ? salePayload.previous_items : [];
+        if (!previousItems.length && db.saleItems) {
+            previousItems = await db.saleItems.where('sale_id').equals(orderId).toArray();
         }
-        const product = await db.products.get(Number(item.product_id));
-        if (product) {
-            const qty = Number(item.quantity) || 0;
-            const next = Math.max(0, Number(product.stock_quantity || 0) - qty);
-            await db.products.update(product.id, {
-                stock_quantity: next,
-                updated_at: now,
-            });
-            const lotId = Number(item.product_lot_id || item.lot_id || 0);
-            if (lotId && db.productLots) {
-                const lot = await db.productLots.get(lotId);
-                if (lot) {
-                    await db.productLots.put({
-                        ...lot,
-                        quantity: Math.max(0, Number(lot.quantity || 0) - qty),
-                        updated_at: now,
-                    });
-                }
-            }
-            if (branchId) {
-                const key = [Number(branchId), Number(item.product_id)];
-                const stock = await db.branchStocks.get(key);
-                if (stock) {
-                    await db.branchStocks.put({
-                        ...stock,
-                        quantity: Math.max(0, Number(stock.quantity || 0) - qty),
-                    });
-                }
+        await applyOfflineStockDelta(previousItems, +1, branchId);
+
+        const existing = await db.sales.get(orderId);
+        await db.sales.put({
+            ...(existing || {}),
+            id: orderId,
+            client_uuid: clientUuid,
+            branch_id: branchId ?? existing?.branch_id ?? null,
+            customer_id: salePayload.customer_id || null,
+            sale_date: (existing?.sale_date) || now.slice(0, 10),
+            payment_method: salePayload.payment_method,
+            paid_amount: salePayload.paid_amount,
+            notes: salePayload.comment || salePayload.customer_name || existing?.notes || '',
+            status: 'completed',
+            payment_status: existing?.payment_status || 'pending',
+            sync_status: 'pending',
+            items: salePayload.items || [],
+            updated_at: now,
+            created_at: existing?.created_at || now,
+        });
+
+        if (db.saleItems) {
+            await db.saleItems.where('sale_id').equals(orderId).delete();
+            for (const [index, item] of (salePayload.items || []).entries()) {
+                await db.saleItems.put({
+                    id: `local-${clientUuid}-${index}`,
+                    sale_id: orderId,
+                    client_uuid: clientUuid,
+                    product_id: item.product_id || null,
+                    product_lot_id: item.product_lot_id || item.lot_id || null,
+                    quantity: item.quantity,
+                    quantity_in_base_unit: item.quantity_in_base_unit ?? item.quantity,
+                    unit_id: item.unit_id || null,
+                    unit_price: item.selling_price,
+                });
             }
         }
+    } else {
+        const localSale = {
+            id: `local-${clientUuid}`,
+            client_uuid: clientUuid,
+            branch_id: branchId,
+            customer_id: salePayload.customer_id || null,
+            sale_date: now.slice(0, 10),
+            payment_method: salePayload.payment_method,
+            paid_amount: salePayload.paid_amount,
+            notes: salePayload.comment || salePayload.customer_name || '',
+            status: 'completed',
+            payment_status: 'pending',
+            sync_status: 'pending',
+            items: salePayload.items || [],
+            updated_at: now,
+            created_at: now,
+        };
+        await db.sales.put(localSale);
     }
+
+    await applyOfflineStockDelta(salePayload.items || [], -1, branchId);
 
     await enqueueMutation({
         entity: 'sale',
-        op: 'create',
+        op: orderId > 0 ? 'update' : 'create',
         payload: salePayload,
         branchId,
         clientUuid,
     });
+
+    const localSale = orderId > 0
+        ? await db.sales.get(orderId)
+        : await db.sales.get(`local-${clientUuid}`);
 
     return { clientUuid, localSale };
 }
