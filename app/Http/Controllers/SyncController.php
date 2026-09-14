@@ -21,6 +21,7 @@ use App\Models\SupplierTransaction;
 use App\Models\Unit;
 use App\Models\UnitConversion;
 use App\Models\User;
+use App\Services\ApplyCustomerSalePaymentService;
 use App\Services\SaleEditStockService;
 use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
@@ -543,7 +544,9 @@ class SyncController extends Controller
         }
 
         $totalAmount = round($subtotal, 2);
-        $paidAmount = min((float) ($payload['paid_amount'] ?? $totalAmount), $totalAmount);
+        $requestedPaidAmount = round((float) ($payload['paid_amount'] ?? $totalAmount), 2);
+        $paidAmount = min($requestedPaidAmount, $totalAmount);
+        $extraPayment = max(0, $requestedPaidAmount - $totalAmount);
         $paymentStatus = 'paid';
         if ($paidAmount <= 0) {
             $paymentStatus = 'pending';
@@ -628,6 +631,18 @@ class SyncController extends Controller
                     $branchId
                 );
             }
+        }
+
+        // Same as online POS: log cash and apply surplus to older unpaid bills.
+        // Skip on edit so re-saving an invoice does not invent a second receipt.
+        if (! $editingSale && $sale->customer_id) {
+            app(ApplyCustomerSalePaymentService::class)->recordCheckout(
+                $sale,
+                $paidAmount,
+                $extraPayment,
+                (int) $user->id,
+                isset($payload['comment']) ? (string) $payload['comment'] : null
+            );
         }
 
         $this->mapUuid($uuid, 'sale', $sale->id, ['sale_number' => $saleNumber], $branchId);
