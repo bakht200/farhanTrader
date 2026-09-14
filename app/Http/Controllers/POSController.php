@@ -42,8 +42,8 @@ class POSController extends Controller
             $customers = collect();
             $customerTypesForPos = collect();
             $units = Unit::where('is_active', true)->get();
-            $editOrderData = null;
             $editOrderId = $request->get('edit_order_id');
+            $editOrderData = $this->formatEditOrderData($this->findEditOrder($editOrderId));
             $posCards = collect();
 
             return view('pos.index', compact(
@@ -93,13 +93,7 @@ class POSController extends Controller
         
         // Check if editing an order first (needed to exclude from balance calculation)
         $editOrderId = $request->get('edit_order_id');
-        $editOrder = null;
-        if ($editOrderId) {
-            $editOrder = Sale::with('items.product.unit', 'customer')->find($editOrderId);
-            if (!$editOrder) {
-                $editOrder = \App\Models\Order::with('items.product.unit', 'customer')->find($editOrderId);
-            }
-        }
+        $editOrder = $this->findEditOrder($editOrderId);
 
         // Calculate balance for each customer - exclude ADJ bills as they are adjustment records
         // Also exclude the order being edited (if any) from the balance calculation
@@ -114,43 +108,7 @@ class POSController extends Controller
             $customer->unpaid_amount = $balanceSummary['unpaid_amount'];
         }
 
-        // Format edit order data for JavaScript
-        $editOrderData = null;
-        if ($editOrder) {
-                // Format order data for JavaScript
-                $editOrderData = [
-                    'id' => $editOrder->id,
-                    'sale_number' => $editOrder->sale_number ?? $editOrder->order_number ?? null,
-                    'order_number' => $editOrder->order_number ?? $editOrder->sale_number ?? null,
-                    'customer' => $editOrder->customer ? [
-                        'id' => $editOrder->customer->id,
-                        'name' => $editOrder->customer->name,
-                        'customer_id' => $editOrder->customer->customer_id,
-                        'customer_type' => $editOrder->customer->customer_type,
-                    ] : null,
-                    'items' => $editOrder->items->map(function($item) {
-                        // Get unit_id from sale_item first, then fallback to product unit
-                        $unitId = $item->unit_id ?? ($item->product ? ($item->product->base_unit_id ?? $item->product->unit_id) : null);
-                        $unit = $unitId ? Unit::find($unitId) : ($item->product && $item->product->unit ? $item->product->unit : null);
-                        
-                        return [
-                            'id' => $item->id,
-                            'product_id' => $item->product_id,
-                            'product_lot_id' => $item->product_lot_id,
-                            'product_name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
-                            'name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
-                            'quantity' => $item->quantity,
-                            'quantity_in_base_unit' => $item->quantity_in_base_unit ?? $item->quantity,
-                            'unit_price' => $item->unit_price,
-                            'selling_price' => $item->unit_price,
-                            'discount' => $item->discount ?? 0,
-                            'unit_id' => $unitId,
-                            'unit_name' => $unit ? $unit->short_name : 'Pcs',
-                            'unit_short_name' => $unit ? $unit->short_name : 'Pcs',
-                        ];
-                    })->values()->all(),
-                ];
-        }
+        $editOrderData = $this->formatEditOrderData($editOrder);
 
         return view('pos.index', compact('products', 'posCards', 'categories', 'customers', 'customerTypesForPos', 'units', 'categoryId', 'search', 'editOrderData', 'editOrderId'));
     }
@@ -1266,5 +1224,77 @@ class POSController extends Controller
     protected function calculateCustomerBalanceSummary(int $customerId, ?int $excludeSaleId = null): array
     {
         return app(CustomerBalanceService::class)->calculateCustomerBalanceSummary($customerId, $excludeSaleId);
+    }
+
+    public function editOrder(int $id)
+    {
+        $order = $this->findEditOrder($id);
+        if (! $order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'order' => $this->formatEditOrderData($order),
+        ]);
+    }
+
+    protected function findEditOrder(int|string|null $editOrderId): Sale|\App\Models\Order|null
+    {
+        if ($editOrderId === null || $editOrderId === '') {
+            return null;
+        }
+
+        $editOrder = Sale::with('items.product.unit', 'customer')->find($editOrderId);
+        if (! $editOrder) {
+            $editOrder = \App\Models\Order::with('items.product.unit', 'customer')->find($editOrderId);
+        }
+
+        return $editOrder;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    protected function formatEditOrderData(Sale|\App\Models\Order|null $editOrder): ?array
+    {
+        if (! $editOrder) {
+            return null;
+        }
+
+        return [
+            'id' => $editOrder->id,
+            'sale_number' => $editOrder->sale_number ?? $editOrder->order_number ?? null,
+            'order_number' => $editOrder->order_number ?? $editOrder->sale_number ?? null,
+            'customer' => $editOrder->customer ? [
+                'id' => $editOrder->customer->id,
+                'name' => $editOrder->customer->name,
+                'customer_id' => $editOrder->customer->customer_id,
+                'customer_type' => $editOrder->customer->customer_type,
+            ] : null,
+            'items' => $editOrder->items->map(function ($item) {
+                $unitId = $item->unit_id ?? ($item->product ? ($item->product->base_unit_id ?? $item->product->unit_id) : null);
+                $unit = $unitId ? Unit::find($unitId) : ($item->product && $item->product->unit ? $item->product->unit : null);
+
+                return [
+                    'id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'product_lot_id' => $item->product_lot_id,
+                    'product_name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
+                    'name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
+                    'quantity' => (float) $item->quantity,
+                    'quantity_in_base_unit' => (float) ($item->quantity_in_base_unit ?? $item->quantity),
+                    'unit_price' => $item->unit_price,
+                    'selling_price' => $item->unit_price,
+                    'discount' => $item->discount ?? 0,
+                    'unit_id' => $unitId,
+                    'unit_name' => $unit ? $unit->short_name : 'Pcs',
+                    'unit_short_name' => $unit ? $unit->short_name : 'Pcs',
+                ];
+            })->values()->all(),
+        ];
     }
 }

@@ -99,6 +99,7 @@ Route::middleware(['auth', 'branch.context'])->group(function () {
             Route::delete('/hold-order/{id}', [POSController::class, 'deleteHoldOrder'])->name('delete-hold-order');
             Route::get('/last-order-items/{customerId}', [POSController::class, 'getLastOrderItems'])->name('last-order-items');
             Route::get('/last-price/{customerId}/{productId}', [POSController::class, 'getLastProductPrice'])->name('last-price');
+            Route::get('/edit-order/{id}', [POSController::class, 'editOrder'])->name('edit-order');
         });
         Route::prefix('invoices')->name('invoices.')->group(function () {
             Route::resource('', InvoiceController::class)->parameters(['' => 'invoice']);

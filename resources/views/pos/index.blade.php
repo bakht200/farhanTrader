@@ -4327,12 +4327,47 @@
             }, 500);
         }
         
-        // Auto-load order for editing if editOrder is present
-        if (editOrder && editOrder.items) {
-            setTimeout(async function() {
-                await loadOrderIntoCart(editOrder);
-            }, 500);
+        // Auto-load order for editing. Cached blank POS shells have no editOrder
+        // JSON, so fall back to the URL id and fetch the order from the server.
+        async function resolveEditOrderFromUrl() {
+            if (editOrder && Array.isArray(editOrder.items) && editOrder.items.length > 0) {
+                return editOrder;
+            }
+            const urlId = new URLSearchParams(window.location.search).get('edit_order_id');
+            if (!urlId) {
+                return null;
+            }
+            try {
+                const res = await fetch(`{{ url('/sales/pos/edit-order') }}/${encodeURIComponent(urlId)}`, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                });
+                if (!res.ok) {
+                    return null;
+                }
+                const data = await res.json();
+                return data.order || null;
+            } catch (e) {
+                console.error('Failed to load order for editing', e);
+                return null;
+            }
         }
+
+        setTimeout(async function() {
+            const order = await resolveEditOrderFromUrl();
+            if (order && order.items && order.items.length) {
+                if (order.id) {
+                    orderId = order.id;
+                }
+                await loadOrderIntoCart(order);
+            } else if (new URLSearchParams(window.location.search).get('edit_order_id')) {
+                alert('Could not load this order into POS. Refresh and try again.');
+            }
+        }, 300);
         
         // Function to load order items into cart for editing
         async function loadOrderIntoCart(order) {

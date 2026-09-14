@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v17';
+const CACHE_NAME = 'ftpos-pages-v18';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -128,6 +128,15 @@ function isLogoutPath(pathname) {
 function isPosPath(pathname) {
   const p = (pathname || '').replace(/\/+$/, '') || '/';
   return p === '/sales/pos';
+}
+
+function isPosEditNavigation(url) {
+  try {
+    return isPosPath(url.pathname)
+      && (url.searchParams.has('edit_order_id') || url.searchParams.has('load_hold'));
+  } catch (e) {
+    return false;
+  }
 }
 
 function isWriteNavigationPath(pathname) {
@@ -495,7 +504,8 @@ async function handleNavigation(request) {
   await restoreLoggedOut();
   const url = new URL(request.url);
   const path = url.pathname;
-  const forceLive = url.searchParams.has('_live');
+  const forceLive = url.searchParams.has('_live') || isPosEditNavigation(url);
+  const isPosEdit = isPosEditNavigation(url);
   const offline = browserIsOffline();
 
   if (forceLive) {
@@ -537,7 +547,7 @@ async function handleNavigation(request) {
   const cacheUsable = cached && !isOfflineHtml(cached) && !responseIsLogin(cached);
 
   // Wi‑Fi off still reaches 127.0.0.1. Never ask Laravel for a session then.
-  const useCacheFirst = !forceLive && cacheUsable && (preferCache || offline);
+  const useCacheFirst = !forceLive && !isPosEdit && cacheUsable && (preferCache || offline);
 
   if (useCacheFirst) {
     return cached;
@@ -578,14 +588,17 @@ async function handleNavigation(request) {
     if (res && res.ok && !responseIsLogin(res) && !isOfflineHtml(res)) {
       loggedOut = false;
       try {
-        const cache = await caches.open(CACHE_NAME);
-        await storePage(cache, path, res.clone());
+        // Never store an edit-order POS page as the blank /sales/pos shell.
+        if (!isPosEdit) {
+          const cache = await caches.open(CACHE_NAME);
+          await storePage(cache, path, res.clone());
+        }
       } catch (e) {}
       return res;
     }
   } catch (e) {}
 
-  if (cached) {
+  if (cached && !isPosEdit) {
     return cached;
   }
   if (offline) {
@@ -596,6 +609,10 @@ async function handleNavigation(request) {
 
 async function matchNavigation(request) {
   const url = new URL(request.url);
+  // Cached /sales/pos is a blank shell. Never reuse it for edit_order_id.
+  if (isPosEditNavigation(url)) {
+    return null;
+  }
   if (loggedOut && !isLoginPath(url.pathname)) {
     return cachedLoginPage();
   }
