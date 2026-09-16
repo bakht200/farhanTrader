@@ -123,13 +123,6 @@ class ProductController extends Controller
                 }
                 return back()->withErrors(['retail_price' => 'Retail price is required when selling type is retail.'])->withInput();
             }
-            // Validate retail price >= purchase price
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                if ($request->expectsJson()) {
-                    return response()->json(['success' => false, 'errors' => ['retail_price' => ['Retail price cannot be less than purchase price.']]], 422);
-                }
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
             $validated['selling_price'] = $validated['retail_price'];
         } elseif ($validated['selling_type'] === 'wholesale') {
             if (empty($validated['wholesale_price'])) {
@@ -137,13 +130,6 @@ class ProductController extends Controller
                     return response()->json(['success' => false, 'errors' => ['wholesale_price' => ['Wholesale price is required when selling type is wholesale.']]], 422);
                 }
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is wholesale.'])->withInput();
-            }
-            // Validate wholesale price >= purchase price
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                if ($request->expectsJson()) {
-                    return response()->json(['success' => false, 'errors' => ['wholesale_price' => ['Wholesale price cannot be less than purchase price.']]], 422);
-                }
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             $validated['selling_price'] = $validated['wholesale_price'];
         } elseif ($validated['selling_type'] === 'both') {
@@ -158,20 +144,6 @@ class ProductController extends Controller
                     return response()->json(['success' => false, 'errors' => ['wholesale_price' => ['Wholesale price is required when selling type is both.']]], 422);
                 }
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is both.'])->withInput();
-            }
-            // Validate retail price >= purchase price
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                if ($request->expectsJson()) {
-                    return response()->json(['success' => false, 'errors' => ['retail_price' => ['Retail price cannot be less than purchase price.']]], 422);
-                }
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
-            // Validate wholesale price >= purchase price
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                if ($request->expectsJson()) {
-                    return response()->json(['success' => false, 'errors' => ['wholesale_price' => ['Wholesale price cannot be less than purchase price.']]], 422);
-                }
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             // For "both", set selling_price to retail_price as default
             $validated['selling_price'] = $validated['retail_price'];
@@ -624,18 +596,10 @@ class ProductController extends Controller
             if (empty($validated['retail_price'])) {
                 return back()->withErrors(['retail_price' => 'Retail price is required when selling type is retail.'])->withInput();
             }
-            // Validate retail price >= purchase price
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
             $validated['selling_price'] = $validated['retail_price'];
         } elseif ($validated['selling_type'] === 'wholesale') {
             if (empty($validated['wholesale_price'])) {
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is wholesale.'])->withInput();
-            }
-            // Validate wholesale price >= purchase price
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             $validated['selling_price'] = $validated['wholesale_price'];
         } elseif ($validated['selling_type'] === 'both') {
@@ -644,14 +608,6 @@ class ProductController extends Controller
             }
             if (empty($validated['wholesale_price'])) {
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is both.'])->withInput();
-            }
-            // Validate retail price >= purchase price
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
-            // Validate wholesale price >= purchase price
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             // For "both", set selling_price to retail_price as default
             $validated['selling_price'] = $validated['retail_price'];
@@ -1433,16 +1389,10 @@ class ProductController extends Controller
             if (empty($validated['retail_price'])) {
                 return back()->withErrors(['retail_price' => 'Retail price is required when selling type is retail.'])->withInput();
             }
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
             $validated['selling_price'] = $validated['retail_price'];
         } elseif ($validated['selling_type'] === 'wholesale') {
             if (empty($validated['wholesale_price'])) {
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is wholesale.'])->withInput();
-            }
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             $validated['selling_price'] = $validated['wholesale_price'];
         } else {
@@ -1451,12 +1401,6 @@ class ProductController extends Controller
             }
             if (empty($validated['wholesale_price'])) {
                 return back()->withErrors(['wholesale_price' => 'Wholesale price is required when selling type is both.'])->withInput();
-            }
-            if ($validated['retail_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['retail_price' => 'Retail price cannot be less than purchase price.'])->withInput();
-            }
-            if ($validated['wholesale_price'] < $validated['purchase_price']) {
-                return back()->withErrors(['wholesale_price' => 'Wholesale price cannot be less than purchase price.'])->withInput();
             }
             $validated['selling_price'] = $validated['retail_price'];
         }

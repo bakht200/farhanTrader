@@ -425,16 +425,17 @@ class ProductLotService
     }
 
     /**
-     * Apply a product-edit selling change only to lots at that purchase rate.
-     * Older lots at other rates keep their own selling prices.
+     * Apply a product-edit selling change to every remaining lot on this branch.
+     * POS sells from lots, so leftover stock at an older purchase rate must
+     * pick up the new retail/wholesale the user just saved.
      */
     public function updateSellingForPurchaseRate(Product $product, int $branchId, float $purchasePrice, array $prices): void
     {
-        $purchase = round($purchasePrice, 2);
+        unset($purchasePrice);
+
         $lots = ProductLot::query()
             ->where('branch_id', $branchId)
             ->where('product_id', $product->id)
-            ->where('purchase_price', $purchase)
             ->get();
 
         if ($lots->isEmpty()) {

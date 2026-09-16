@@ -816,22 +816,12 @@
             }
         }
 
-        // Validate price against purchase price
+        // Selling may be below last purchase (market drop). Do not block the form.
         function validatePrice(inputElement, priceType) {
-            const purchasePrice = parseFloat(document.getElementById('purchase_price').value) || 0;
-            const price = parseFloat(inputElement.value) || 0;
-            
-            if (price > 0 && price < purchasePrice) {
-                inputElement.setCustomValidity(priceType + ' price cannot be less than purchase price.');
-                inputElement.classList.add('border-red-500');
-                inputElement.classList.remove('border-gray-300');
-                return false;
-            } else {
-                inputElement.setCustomValidity('');
-                inputElement.classList.remove('border-red-500');
-                inputElement.classList.add('border-gray-300');
-                return true;
-            }
+            inputElement.setCustomValidity('');
+            inputElement.classList.remove('border-red-500');
+            inputElement.classList.add('border-gray-300');
+            return true;
         }
 
         // Initialize price fields on page load and set up event listeners

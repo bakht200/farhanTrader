@@ -190,7 +190,7 @@ class ProductReceivedStockTest extends TestCase
         $this->assertEquals(16.0, (float) $product->fresh()->currentStock($branch->id));
     }
 
-    public function test_editing_selling_price_updates_only_the_matching_purchase_lot(): void
+    public function test_editing_selling_price_updates_all_remaining_lots_on_pos(): void
     {
         $branch = $this->makeBranch('LOT SELLING');
         $user = $this->makeBranchUser($branch);
@@ -238,8 +238,8 @@ class ProductReceivedStockTest extends TestCase
             'wholesale_price' => 550,
         ]))->assertRedirect();
 
-        $this->assertEquals(250.0, (float) $oldLot->fresh()->retail_price);
-        $this->assertEquals(250.0, (float) $oldLot->fresh()->selling_price);
+        $this->assertEquals(550.0, (float) $oldLot->fresh()->retail_price);
+        $this->assertEquals(550.0, (float) $oldLot->fresh()->selling_price);
         $this->assertEquals(10.0, (float) $oldLot->fresh()->quantity);
         $this->assertEquals(550.0, (float) $newLot->fresh()->retail_price);
         $this->assertEquals(550.0, (float) $newLot->fresh()->selling_price);
@@ -248,8 +248,47 @@ class ProductReceivedStockTest extends TestCase
         $html = $this->get(route('sales.pos.index'))->assertOk()->getContent();
         $this->assertStringContainsString('Rate PKR 200.00', $html);
         $this->assertStringContainsString('Rate PKR 400.00', $html);
-        $this->assertStringContainsString('250.00', $html);
         $this->assertStringContainsString('550.00', $html);
+        $this->assertStringNotContainsString('250.00', $html);
+    }
+
+    public function test_retail_price_can_be_saved_below_purchase_price(): void
+    {
+        $branch = $this->makeBranch('BELOW COST');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, [
+            'name' => 'TAZA GHEE',
+            'purchase_price' => 8050,
+            'retail_price' => 8500,
+            'selling_price' => 8500,
+            'selling_type' => 'retail',
+        ], 9);
+
+        $lot = ProductLot::query()->create([
+            'branch_id' => $branch->id,
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'quantity' => 9,
+            'purchase_price' => 8050,
+            'extra_price' => 0,
+            'retail_price' => 8500,
+            'wholesale_price' => 8500,
+            'selling_price' => 8500,
+            'selling_type' => 'retail',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($user);
+        $this->put(route('products.update', $product), $this->editPayload($product, [
+            'stock_quantity' => 9,
+            'purchase_price' => 8050,
+            'retail_price' => 8000,
+            'selling_price' => 8000,
+            'wholesale_price' => 8000,
+        ]))->assertRedirect(route('products.index'));
+
+        $this->assertEquals(8000.0, (float) $product->fresh()->getAttributes()['retail_price']);
+        $this->assertEquals(8000.0, (float) $lot->fresh()->retail_price);
     }
 
     public function test_add_received_without_lots_creates_lot_including_existing_stock(): void
