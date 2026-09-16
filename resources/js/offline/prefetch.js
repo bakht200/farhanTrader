@@ -6,7 +6,7 @@
 import { isOnline } from './connectivity';
 import { db } from './db';
 
-export const CACHE_NAME = 'ftpos-pages-v18';
+export const CACHE_NAME = 'ftpos-pages-v19';
 
 export const CORE_SHELLS = [
     '/dashboard',

@@ -21,7 +21,8 @@ class PosEditOrderTest extends TestCase
             ->get(route('sales.pos.index', ['edit_order_id' => $sale->id]))
             ->assertOk()
             ->assertSee('CITRIC MOTA', false)
-            ->assertSee((string) $sale->id, false);
+            ->assertSee((string) $sale->id, false)
+            ->assertHeader('Cache-Control', 'no-store, private');
     }
 
     public function test_pos_edit_order_json_returns_the_sale_items(): void
@@ -41,6 +42,7 @@ class PosEditOrderTest extends TestCase
         $pos = file_get_contents(resource_path('views/pos/index.blade.php'));
 
         $this->assertStringContainsString('resolveEditOrderFromUrl', $pos);
+        $this->assertStringContainsString('urlEditOrderId', $pos);
         $this->assertStringContainsString('/sales/pos/edit-order', $pos);
         $this->assertStringContainsString('edit_order_id', $pos);
     }

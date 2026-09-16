@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Product;
+use App\Models\ProductLot;
 use App\Models\Sale;
 use App\Models\SaleItem;
 
@@ -92,5 +94,109 @@ class SaleEditStockService
             $item->product_lot_id ? (int) $item->product_lot_id : null,
             $branchId
         );
+    }
+
+    /**
+     * Apply only the quantity difference for an invoice edit.
+     * Same items/qty => no stock movement. Increase deducts extra; decrease returns stock.
+     *
+     * @param  array{products: array<int, float>, lots: array<int, float>}  $oldCredits
+     * @param  array<int, array{product: Product, qty_in_base: float, lot_id: ?int}>  $newRows
+     */
+    public function applyNetChange(array $oldCredits, array $newRows, ?int $branchId, int $saleId): void
+    {
+        $newProducts = [];
+        $newLots = [];
+        $products = [];
+
+        foreach ($newRows as $row) {
+            $product = $row['product'] ?? null;
+            if (! $product instanceof Product) {
+                continue;
+            }
+            $productId = (int) $product->id;
+            $qty = (float) ($row['qty_in_base'] ?? 0);
+            $products[$productId] = $product;
+            $newProducts[$productId] = ($newProducts[$productId] ?? 0) + $qty;
+            if (! empty($row['lot_id'])) {
+                $lotId = (int) $row['lot_id'];
+                $newLots[$lotId] = ($newLots[$lotId] ?? 0) + $qty;
+            }
+        }
+
+        $productIds = array_unique(array_merge(
+            array_map('intval', array_keys($oldCredits['products'] ?? [])),
+            array_keys($newProducts)
+        ));
+
+        foreach ($productIds as $productId) {
+            $delta = round(($newProducts[$productId] ?? 0) - (float) ($oldCredits['products'][$productId] ?? 0), 6);
+            if (abs($delta) < 0.000001) {
+                continue;
+            }
+
+            $product = $products[$productId] ?? Product::query()->find($productId);
+            if (! $product) {
+                continue;
+            }
+
+            if ($delta > 0) {
+                $product->decrementStock($delta, $branchId, [
+                    'source_type' => 'sale',
+                    'source_id' => $saleId,
+                    'reason' => 'POS edit qty increase',
+                ]);
+            } else {
+                $product->incrementStock(abs($delta), $branchId, [
+                    'source_type' => 'sale',
+                    'source_id' => $saleId,
+                    'reason' => 'POS edit qty decrease',
+                ]);
+            }
+        }
+
+        $lotService = app(ProductLotService::class);
+        $lotIds = array_unique(array_merge(
+            array_map('intval', array_keys($oldCredits['lots'] ?? [])),
+            array_keys($newLots)
+        ));
+
+        foreach ($lotIds as $lotId) {
+            $delta = round(($newLots[$lotId] ?? 0) - (float) ($oldCredits['lots'][$lotId] ?? 0), 6);
+            if (abs($delta) < 0.000001) {
+                continue;
+            }
+
+            $lot = ProductLot::query()->find($lotId);
+            if (! $lot) {
+                continue;
+            }
+            $product = $products[$lot->product_id] ?? Product::query()->find($lot->product_id);
+            if (! $product) {
+                continue;
+            }
+
+            if ($delta > 0) {
+                $lotService->decrementForSale($product, $delta, $lotId, $branchId);
+            } else {
+                $lotService->restoreForSale($product, abs($delta), $lotId, $branchId);
+            }
+        }
+
+        $unlottedExtraDone = [];
+        foreach ($newRows as $row) {
+            if (! empty($row['lot_id']) || ! ($row['product'] instanceof Product)) {
+                continue;
+            }
+            $productId = (int) $row['product']->id;
+            if (isset($unlottedExtraDone[$productId])) {
+                continue;
+            }
+            $unlottedExtraDone[$productId] = true;
+            $delta = round(($newProducts[$productId] ?? 0) - (float) ($oldCredits['products'][$productId] ?? 0), 6);
+            if ($delta > 0.000001) {
+                $lotService->decrementForSale($row['product'], $delta, null, $branchId);
+            }
+        }
     }
 }

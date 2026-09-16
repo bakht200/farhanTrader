@@ -46,7 +46,7 @@ class POSController extends Controller
             $editOrderData = $this->formatEditOrderData($this->findEditOrder($editOrderId));
             $posCards = collect();
 
-            return view('pos.index', compact(
+            return $this->posIndexView(compact(
                 'products',
                 'posCards',
                 'categories',
@@ -57,7 +57,7 @@ class POSController extends Controller
                 'search',
                 'editOrderData',
                 'editOrderId'
-            ));
+            ), $editOrderId);
         }
 
         $query = Product::where('is_active', true)
@@ -110,7 +110,17 @@ class POSController extends Controller
 
         $editOrderData = $this->formatEditOrderData($editOrder);
 
-        return view('pos.index', compact('products', 'posCards', 'categories', 'customers', 'customerTypesForPos', 'units', 'categoryId', 'search', 'editOrderData', 'editOrderId'));
+        return $this->posIndexView(compact('products', 'posCards', 'categories', 'customers', 'customerTypesForPos', 'units', 'categoryId', 'search', 'editOrderData', 'editOrderId'), $editOrderId);
+    }
+
+    protected function posIndexView(array $data, mixed $editOrderId)
+    {
+        $response = response()->view('pos.index', $data);
+        if ($editOrderId !== null && $editOrderId !== '') {
+            $response->headers->set('Cache-Control', 'no-store, private');
+        }
+
+        return $response;
     }
 
     public function process(Request $request)
@@ -309,6 +319,9 @@ class POSController extends Controller
             $isEditing = !empty($validated['order_id']);
             $sale = null;
             
+            $editStockCredits = ['products' => [], 'lots' => []];
+            $editStock = app(SaleEditStockService::class);
+
             if ($isEditing) {
                 // Update existing sale/order
                 $sale = Sale::with('items.product')->find($validated['order_id']);
@@ -317,8 +330,8 @@ class POSController extends Controller
                     throw new \Exception('Order not found for editing.');
                 }
 
-                // Restore only if this sale previously deducted stock (completed).
-                app(SaleEditStockService::class)->restoreSaleItems($sale, null, 'POS edit restore');
+                $sale->load('items.product');
+                $editStockCredits = $editStock->availabilityCredits($sale);
                 
                 // Delete all existing items
                 $sale->items()->delete();
@@ -376,6 +389,7 @@ class POSController extends Controller
         // Create sale items
         $stockAlerts = [];
         $stockChangeTracker = []; // product_id => [name, oldQty, newQty]
+        $newStockRows = [];
 
         foreach ($request->input('items', []) as $item) {
             $isCustom = isset($item['is_custom']) && $item['is_custom'] == '1';
@@ -422,15 +436,17 @@ class POSController extends Controller
                 $unitId = $item['unit_id'] ?? $product->base_unit_id ?? $product->unit_id;
                 
                 $quantityInBaseUnit = $this->resolveQuantityInBaseUnit($product, (float) $item['quantity'], $unitId ? (int) $unitId : null);
+                $lotId = ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null;
                 $currentQty = (float) $product->stock_quantity;
-                if ($quantityInBaseUnit > ($currentQty + 0.000001)) {
+                $available = $currentQty + (float) ($editStockCredits['products'][$product->id] ?? 0);
+                if ($quantityInBaseUnit > ($available + 0.000001)) {
                     throw new \Exception("Insufficient stock for {$product->name}. Available: {$product->stock_quantity}");
                 }
                 
                 SaleItem::create([
                     'sale_id' => $sale->id,
                     'product_id' => $item['product_id'],
-                    'product_lot_id' => ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null,
+                    'product_lot_id' => $lotId,
                     'quantity' => $item['quantity'],
                     'unit_id' => $unitId,
                     'quantity_in_base_unit' => $quantityInBaseUnit,
@@ -440,16 +456,43 @@ class POSController extends Controller
                     'total' => $itemTotal,
                 ]);
 
-                // Update product stock using base unit quantity
-                $newQty = $product->decrementStock($quantityInBaseUnit, null, [
+                $newStockRows[] = [
+                    'product' => $product,
+                    'qty_in_base' => (float) $quantityInBaseUnit,
+                    'lot_id' => $lotId,
+                    'current_qty' => $currentQty,
+                ];
+            }
+        }
+
+        if ($isEditing) {
+            $editStock->applyNetChange($editStockCredits, $newStockRows, null, $sale->id);
+            foreach ($newStockRows as $row) {
+                $product = $row['product'];
+                $after = (float) $product->fresh()->currentStock();
+                if (! isset($stockChangeTracker[$product->id])) {
+                    $stockChangeTracker[$product->id] = [
+                        'name' => $product->name,
+                        'oldQty' => (float) $row['current_qty'],
+                        'newQty' => $after,
+                    ];
+                } else {
+                    $stockChangeTracker[$product->id]['newQty'] = $after;
+                }
+            }
+        } else {
+            foreach ($newStockRows as $row) {
+                $product = $row['product'];
+                $currentQty = (float) $row['current_qty'];
+                $newQty = $product->decrementStock($row['qty_in_base'], null, [
                     'source_type' => 'sale',
                     'source_id' => $sale->id,
                     'reason' => 'POS sale',
                 ]);
                 app(\App\Services\ProductLotService::class)->decrementForSale(
                     $product,
-                    (float) $quantityInBaseUnit,
-                    ! empty($item['product_lot_id']) ? (int) $item['product_lot_id'] : null
+                    $row['qty_in_base'],
+                    $row['lot_id']
                 );
 
                 if (! isset($stockChangeTracker[$product->id])) {

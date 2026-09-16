@@ -557,7 +557,7 @@ class SyncController extends Controller
         $customerName = trim((string) ($payload['customer_name'] ?? 'Walk-in Customer')) ?: 'Walk-in Customer';
 
         if ($editingSale) {
-            $editStock->restoreSaleItems($editingSale, $branchId, 'offline sync edit restore');
+            $editStockCredits = $editStock->availabilityCredits($editingSale);
             $editingSale->items()->delete();
             $editingSale->update([
                 'customer_id' => $payload['customer_id'] ?? null,
@@ -617,11 +617,11 @@ class SyncController extends Controller
                 'total' => $lineTotal,
             ]);
 
-            if ($product) {
+            if ($product && ! $editingSale) {
                 $product->decrementStock($row['qty_in_base'], $branchId, [
                     'source_type' => 'sale',
                     'source_id' => $sale->id,
-                    'reason' => $editingSale ? 'offline sync edit sale' : 'offline sync sale',
+                    'reason' => 'offline sync sale',
                     'idempotency_key' => 'sync-sale-'.$uuid.'-'.$product->id.($row['lot_id'] ? '-lot-'.$row['lot_id'] : ''),
                 ]);
                 app(\App\Services\ProductLotService::class)->decrementForSale(
@@ -631,6 +631,23 @@ class SyncController extends Controller
                     $branchId
                 );
             }
+        }
+
+        if ($editingSale) {
+            $editStock->applyNetChange(
+                $editStockCredits,
+                collect($prepared)
+                    ->filter(fn ($row) => $row['product'])
+                    ->map(fn ($row) => [
+                        'product' => $row['product'],
+                        'qty_in_base' => (float) $row['qty_in_base'],
+                        'lot_id' => $row['lot_id'] ?: null,
+                    ])
+                    ->values()
+                    ->all(),
+                $branchId,
+                $sale->id
+            );
         }
 
         // Same as online POS: log cash and apply surplus to older unpaid bills.

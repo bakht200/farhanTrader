@@ -49,10 +49,13 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('offlineNavigationFallback', $sw);
         $this->assertStringContainsString('Do not return an empty JS stub', $sw);
         $this->assertStringNotContainsString("/* offline */", $sw);
-        $this->assertStringContainsString('ftpos-pages-v18', $sw);
+        $this->assertStringContainsString('NAV_TIMEOUT_POS_EDIT_MS = 20000', $sw);
+        $this->assertStringContainsString('ftpos-pages-v19', $sw);
         $this->assertStringContainsString('function isPosEditNavigation', $sw);
         $this->assertStringContainsString('edit_order_id', $sw);
         $this->assertStringContainsString('Never store an edit-order POS page', $sw);
+        $this->assertStringContainsString('isPosEditNavigation(url) && !offline', $sw);
+        $this->assertStringContainsString('function matchPosShell', $sw);
         $this->assertStringContainsString('resolveOnlineRedirect', $sw);
         $this->assertStringContainsString('Do not treat opaque redirects as login', $sw);
         $this->assertStringContainsString('Follow Laravel redirects while online', $sw);
@@ -96,7 +99,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/login'", $prefetch);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
-            $this->assertStringContainsString("ftpos-pages-v18", $prefetch);
+            $this->assertStringContainsString("ftpos-pages-v19", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('options.includeSuppliers', $prefetch);

@@ -412,12 +412,13 @@
         const categoriesData = @json($categoriesData);
         const editOrder = @json($editOrderData ?? null);
         const editOrderId = @json($editOrderId ?? null);
+        const urlEditOrderId = new URLSearchParams(window.location.search).get('edit_order_id');
         let cart = [];
         let paymentMethod = 'cash';
         let allCustomers = customersData;
         let allCategories = categoriesData.slice();
         let customerTypeFilter = 'all';
-        let orderId = editOrderId || 0;
+        let orderId = Number(editOrderId || urlEditOrderId || 0) || 0;
         let customerPreviousBalance = 0;
         let purchasePriceVisible = false; // Purchase price masked by default (shows XXXX)
         let currentCategoryId = '{{ $categoryId }}'; // Current selected category
@@ -4367,7 +4368,7 @@
             } else if (new URLSearchParams(window.location.search).get('edit_order_id')) {
                 alert('Could not load this order into POS. Refresh and try again.');
             }
-        }, 300);
+        }, 0);
         
         // Function to load order items into cart for editing
         async function loadOrderIntoCart(order) {

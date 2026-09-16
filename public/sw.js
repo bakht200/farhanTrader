@@ -1,10 +1,11 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v18';
+const CACHE_NAME = 'ftpos-pages-v19';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
 const NAV_TIMEOUT_UNCACHED_MS = 4000;
 const NAV_TIMEOUT_POS_MS = 2500;
+const NAV_TIMEOUT_POS_EDIT_MS = 20000;
 
 /** Page runtime tells us when the link is actually usable. Network-first until told otherwise. */
 let preferCache = false;
@@ -556,9 +557,11 @@ async function handleNavigation(request) {
   try {
     const res = await fetchWithTimeout(
       request,
-      forceLive || isPosPath(path)
-        ? NAV_TIMEOUT_POS_MS
-        : (cacheUsable ? NAV_TIMEOUT_ONLINE_MS : NAV_TIMEOUT_UNCACHED_MS)
+      isPosEdit
+        ? NAV_TIMEOUT_POS_EDIT_MS
+        : (forceLive || isPosPath(path)
+          ? NAV_TIMEOUT_POS_MS
+          : (cacheUsable ? NAV_TIMEOUT_ONLINE_MS : NAV_TIMEOUT_UNCACHED_MS))
     );
     if (redirectGoesToLogin(res) || (res && responseIsLogin(res) && !isLoginPath(path))) {
       if (cacheUsable && (offline || preferCache || vaultSession)) {
@@ -601,10 +604,29 @@ async function handleNavigation(request) {
   if (cached && !isPosEdit) {
     return cached;
   }
+  // Slow POS must still open as POS so JS can fetch /sales/pos/edit-order/{id}.
+  if (isPosEdit) {
+    const posShell = await matchPosShell();
+    if (posShell) {
+      return posShell;
+    }
+  }
   if (offline) {
     return offlineNavigationFallback(path, false);
   }
   return fallbackDocument();
+}
+
+async function matchPosShell() {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const hit = await cache.match('/sales/pos', { ignoreSearch: true })
+      || await cache.match(new URL('/sales/pos', self.location.origin).href);
+    if (hit && !isOfflineHtml(hit) && !responseIsLogin(hit)) {
+      return hit;
+    }
+  } catch (e) {}
+  return null;
 }
 
 async function matchNavigation(request) {
@@ -723,6 +745,11 @@ self.addEventListener('fetch', (event) => {
 
   if (req.mode === 'navigate') {
     if (isWriteNavigationPath(url.pathname)) {
+      return;
+    }
+    // Online pending-order edit must hit Laravel. The SW 2.5s POS timeout
+    // was returning an empty document instead of the invoice cart.
+    if (isPosEditNavigation(url) && !offline) {
       return;
     }
     event.respondWith(handleNavigation(req));
