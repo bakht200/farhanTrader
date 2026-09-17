@@ -603,18 +603,20 @@ class SupplierController extends Controller
         $units = Unit::where('is_active', true)->orderBy('name')->get();
         $forceNewProducts = (bool) $supplier->is_anonymous;
 
-        return view('suppliers.transactions.create', compact(
-            'supplier',
-            'creditTotal',
-            'debitTotal',
-            'balance',
-            'bills',
-            'products',
-            'productsData',
-            'categories',
-            'units',
-            'forceNewProducts'
-        ));
+        return response()
+            ->view('suppliers.transactions.create', compact(
+                'supplier',
+                'creditTotal',
+                'debitTotal',
+                'balance',
+                'bills',
+                'products',
+                'productsData',
+                'categories',
+                'units',
+                'forceNewProducts'
+            ))
+            ->header('Cache-Control', 'no-store, private');
     }
 
     public function storeTransaction(Request $request, Supplier $supplier)

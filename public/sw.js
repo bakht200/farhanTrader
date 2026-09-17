@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v19';
+const CACHE_NAME = 'ftpos-pages-v20';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -152,6 +152,31 @@ function isSupplierAppPath(pathname) {
   return p === '/suppliers' || p.startsWith('/suppliers/');
 }
 
+function isSupplierIndexPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/suppliers';
+}
+
+function isCustomerIndexPath(pathname) {
+  const p = (pathname || '').replace(/\/+$/, '') || '/';
+  return p === '/customers';
+}
+
+function isNestedListNavigation(url) {
+  try {
+    const p = url.pathname.replace(/\/+$/, '') || '/';
+    if (p.startsWith('/suppliers/') && p !== '/suppliers/anonymous-purchase') {
+      return true;
+    }
+    if (p.startsWith('/customers/')) {
+      return true;
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 function isCustomerAppPath(pathname) {
   const p = (pathname || '').replace(/\/+$/, '') || '/';
   return p === '/customers' || p.startsWith('/customers/');
@@ -160,6 +185,26 @@ function isCustomerAppPath(pathname) {
 function isDashboardPath(pathname) {
   const p = (pathname || '').replace(/\/+$/, '') || '/';
   return p === '/' || p === '/dashboard';
+}
+
+function htmlLooksLikeSupplierIndex(buf) {
+  try {
+    const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+    const text = new TextDecoder().decode(slice);
+    return text.includes('data-ftpos-page="suppliers-index"');
+  } catch (e) {
+    return false;
+  }
+}
+
+function htmlLooksLikeCustomerIndex(buf) {
+  try {
+    const slice = buf.byteLength > 65536 ? buf.slice(0, 65536) : buf;
+    const text = new TextDecoder().decode(slice);
+    return text.includes('data-ftpos-page="customers-index"');
+  } catch (e) {
+    return false;
+  }
 }
 
 function htmlLooksLikeDashboard(buf) {
@@ -239,6 +284,12 @@ async function offlineNavigationFallback(requestPath, preferLogin) {
   if (preferLogin) {
     return serveLoginHtml();
   }
+  // Nested URLs must not paint the suppliers/customers index. That is the
+  // Add Transaction bug: address bar stays on /suppliers/111/transactions/create.
+  if (isNestedListNavigation({ pathname: p })) {
+    const parent = p.replace(/\/(transactions|bills)(\/.*)?$/, '');
+    return (await firstHtml([p, parent, APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
+  }
   if (isCustomerAppPath(p)) {
     return (await firstHtml(['/customers', APP_SHELL_PATH, '/dashboard', '/login'])) || fallbackDocument();
   }
@@ -275,6 +326,12 @@ async function storePage(cache, path, res) {
     return false;
   }
   if (!isDashboardPath(path) && !isLoginPath(path) && htmlLooksLikeDashboard(buf)) {
+    return false;
+  }
+  if (!isSupplierIndexPath(path) && htmlLooksLikeSupplierIndex(buf)) {
+    return false;
+  }
+  if (!isCustomerIndexPath(path) && htmlLooksLikeCustomerIndex(buf)) {
     return false;
   }
   const contentType = res.headers.get('Content-Type') || 'text/html; charset=UTF-8';
@@ -656,11 +713,19 @@ async function matchNavigation(request) {
         if (htmlLooksLikeDashboard(buf)) {
           continue;
         }
+        if (!isSupplierIndexPath(url.pathname) && htmlLooksLikeSupplierIndex(buf)) {
+          continue;
+        }
+        if (!isCustomerIndexPath(url.pathname) && htmlLooksLikeCustomerIndex(buf)) {
+          continue;
+        }
       }
       return hit;
     }
   }
-  if (isCustomerAppPath(url.pathname)) {
+  // Nested supplier/customer URLs must not reuse the list page (Add Transaction
+  // was painting /suppliers under /suppliers/111/transactions/create).
+  if (isCustomerIndexPath(url.pathname)) {
     const list = await cache.match('/customers', { ignoreSearch: true })
       || await cache.match(new URL('/customers', self.location.origin).href);
     if (list && !responseIsLogin(list) && !isOfflineHtml(list)) {
@@ -670,7 +735,7 @@ async function matchNavigation(request) {
       }
     }
   }
-  if (isSupplierAppPath(url.pathname)) {
+  if (isSupplierIndexPath(url.pathname)) {
     const list = await cache.match('/suppliers', { ignoreSearch: true })
       || await cache.match(new URL('/suppliers', self.location.origin).href);
     if (list && !responseIsLogin(list) && !isOfflineHtml(list)) {
@@ -750,6 +815,9 @@ self.addEventListener('fetch', (event) => {
     // Online pending-order edit must hit Laravel. The SW 2.5s POS timeout
     // was returning an empty document instead of the invoice cart.
     if (isPosEditNavigation(url) && !offline) {
+      return;
+    }
+    if (isNestedListNavigation(url) && !offline) {
       return;
     }
     event.respondWith(handleNavigation(req));
