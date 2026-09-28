@@ -181,11 +181,13 @@
 
                 <div class="grid gap-2" id="products-grid" style="grid-template-columns: repeat(8, minmax(0, 1fr));">
                     @foreach(($posCards ?? collect()) as $card)
+                    @if((float) ($card['stock_quantity'] ?? 0) > 0)
                     <div onclick="addToCart({{ $card['id'] }}, {{ $card['lot_id'] ? $card['lot_id'] : 'null' }})"
                          data-product-name="{{ $card['name'] }}"
                          data-product-sku="{{ $card['sku'] ?? '' }}"
                          data-product-brand="{{ $card['brand'] ?? '' }}"
                          data-category-id="{{ $card['category_id'] }}"
+                         data-stock-quantity="{{ $card['stock_quantity'] }}"
                          class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
                         <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
                             @if(!empty($card['image']))
@@ -205,6 +207,7 @@
                             <p class="text-xs text-gray-400 mt-1">{{ ucfirst($card['selling_type']) }}</p>
                         @endif
                     </div>
+                    @endif
                     @endforeach
                 </div>
             </div>
@@ -482,9 +485,12 @@
                 const productLots = lotsByProduct.get(Number(p.id)) || [];
                 if (productLots.length) {
                     productLots.forEach((lot) => {
+                        if (Number(lot.quantity || 0) <= 0) {
+                            return;
+                        }
                         cards.push(mapCachedPosProduct(applyLotToCachedProduct(p, lot)));
                     });
-                } else {
+                } else if (Number(p.stock_quantity || 0) > 0) {
                     cards.push(mapCachedPosProduct(p));
                 }
             });
@@ -519,7 +525,7 @@
             const productsGrid = document.getElementById('products-grid');
             if (!productsGrid) return;
 
-            productsGrid.innerHTML = products.map((product) => {
+            productsGrid.innerHTML = products.filter(productHasSellableStock).map((product) => {
                 const price = Number(posDisplayPrice(product) || 0);
                 const qty = Number(product.stock_quantity || 0);
                 const img = product.image
@@ -536,6 +542,7 @@
                          data-product-sku="${escapePosHtml(product.sku || '')}"
                          data-product-brand="${escapePosHtml(product.brand || '')}"
                          data-category-id="${escapePosHtml(product.category_id || '')}"
+                         data-stock-quantity="${qty}"
                          class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
                         <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">${img}</div>
                         <h4 class="font-semibold text-xs mb-1 line-clamp-2">${escapePosHtml(product.name)}</h4>
@@ -702,7 +709,56 @@
         });
 
         function getNumericStockQuantity(item) {
-            return parseFloat(item?.stock_quantity) || 0;
+            // While editing a completed invoice, current shelf stock already had
+            // this invoice deducted. Credit that qty back (same as server).
+            return (parseFloat(item?.stock_quantity) || 0) + getEditStockCreditForItem(item);
+        }
+
+        // Original invoice stock credits for edit validation (not a second sale).
+        let editStockCredits = { products: {}, lots: {} };
+
+        function clearEditStockCredits() {
+            editStockCredits = { products: {}, lots: {} };
+        }
+
+        function rebuildEditStockCredits(order) {
+            clearEditStockCredits();
+            if (!order || !orderId) {
+                return;
+            }
+            // Hold/draft carts never deducted stock — no credit.
+            if (order.stock_was_deducted === false) {
+                return;
+            }
+            if (order.stock_was_deducted !== true && order.status && order.status !== 'completed') {
+                return;
+            }
+            (order.items || []).forEach((item) => {
+                if (!item || !item.product_id) {
+                    return;
+                }
+                const qty = parseFloat(item.quantity_in_base_unit ?? item.quantity) || 0;
+                if (qty <= 0) {
+                    return;
+                }
+                const productId = Number(item.product_id);
+                editStockCredits.products[productId] = (editStockCredits.products[productId] || 0) + qty;
+                const lotId = Number(item.product_lot_id || item.lot_id || 0);
+                if (lotId) {
+                    editStockCredits.lots[lotId] = (editStockCredits.lots[lotId] || 0) + qty;
+                }
+            });
+        }
+
+        function getEditStockCreditForItem(item) {
+            if (!orderId || !item?.product_id) {
+                return 0;
+            }
+            const lotId = Number(item.lot_id || 0);
+            if (lotId && Object.prototype.hasOwnProperty.call(editStockCredits.lots, lotId)) {
+                return Number(editStockCredits.lots[lotId] || 0);
+            }
+            return Number(editStockCredits.products[Number(item.product_id)] || 0);
         }
 
         function getItemBaseUnitId(item) {
@@ -914,6 +970,13 @@
                 .trim();
         }
 
+        function productHasSellableStock(productOrStock) {
+            const qty = typeof productOrStock === 'object'
+                ? Number(productOrStock?.stock_quantity || 0)
+                : Number(productOrStock || 0);
+            return qty > 0.000001;
+        }
+
         function productMatchesSearch(productOrName, productSku, rawQuery) {
             const query = String(rawQuery || '').toLowerCase().trim();
             if (!query) {
@@ -946,8 +1009,10 @@
                 return;
             }
             
-            // Filter products based on search term
-            const filtered = products.filter(product => productMatchesSearch(product, null, searchTerm));
+            // Filter products based on search term; never suggest zero-stock rows
+            const filtered = products.filter(product =>
+                productHasSellableStock(product) && productMatchesSearch(product, null, searchTerm)
+            );
             
             if (filtered.length > 0) {
                 filtered.slice(0, 10).forEach(product => {
@@ -1181,8 +1246,9 @@
                     card.getAttribute('data-product-sku') || '',
                     searchTerm
                 );
+                const hasStock = productHasSellableStock(card.getAttribute('data-stock-quantity'));
                 
-                if (matchesCategory && matchesSearch) {
+                if (matchesCategory && matchesSearch && hasStock) {
                     card.style.display = '';
                 } else {
                     card.style.display = 'none';
@@ -1217,8 +1283,9 @@
                 
                 // Check if matches current category filter
                 const matchesCategory = currentCategoryId === 'all' || cardCategoryId === currentCategoryId.toString();
+                const hasStock = productHasSellableStock(card.getAttribute('data-stock-quantity'));
                 
-                if (matchesSearch && matchesCategory) {
+                if (matchesSearch && matchesCategory && hasStock) {
                     card.style.display = '';
                 } else {
                     card.style.display = 'none';
@@ -3362,6 +3429,9 @@
         function addProductToGrid(product) {
             const productsGrid = document.getElementById('products-grid');
             if (!productsGrid) return;
+            if (!productHasSellableStock(product)) {
+                return;
+            }
 
             // Calculate display price
             let displayPrice = product.selling_price;
@@ -3379,6 +3449,7 @@
             productCard.setAttribute('data-product-name', product.name);
             productCard.setAttribute('data-product-sku', product.sku || '');
             productCard.setAttribute('data-category-id', product.category_id || '');
+            productCard.setAttribute('data-stock-quantity', String(product.stock_quantity || 0));
             productCard.className = 'bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow';
 
             // Build inner HTML
@@ -3442,6 +3513,7 @@
             // Reset orderId to 0 for new orders (don't increment here)
             // orderId will be reset to 0 after order completion
             orderId = 0;
+            clearEditStockCredits();
             const orderIdEl = document.getElementById('order-id');
             if (orderIdEl) {
                 orderIdEl.textContent = orderId || 1;
@@ -4380,6 +4452,12 @@
 
             // Clear current cart
             cart = [];
+            if (order && order.id) {
+                orderId = Number(order.id) || orderId;
+            }
+            // Credit original invoice qty so place-order does not treat this edit
+            // as needing fresh stock on top of what this sale already used.
+            rebuildEditStockCredits(order);
 
             // Set customer information
             if (order.customer && order.customer.id) {
@@ -4419,8 +4497,8 @@
                         discountValue = item.discount;
                     }
 
-                    if (isCustom || !product) {
-                        // Custom product or product not found
+                    if (isCustom) {
+                        // Custom product
                         cart.push({
                             product_id: null,
                             name: item.product_name || item.name || 'Custom Product',
@@ -4437,6 +4515,27 @@
                             discount_type: 'fixed',
                             discount: discountValue,
                             is_custom: true,
+                        });
+                    } else if (!product) {
+                        // Hidden from POS search/grid when stock is 0; still restore the invoice line.
+                        cart.push({
+                            product_id: Number(item.product_id),
+                            lot_id: lotId || null,
+                            name: item.product_name || item.name || 'Product',
+                            purchase_price: parseFloat(item.purchase_price) || 0,
+                            selling_price: parseFloat(item.unit_price || item.selling_price) || 0,
+                            retail_price: parseFloat(item.unit_price || item.selling_price) || 0,
+                            wholesale_price: parseFloat(item.unit_price || item.selling_price) || 0,
+                            selling_type: 'retail',
+                            price_type: 'retail',
+                            quantity: parseFloat(item.quantity) || 0,
+                            unit_id: item.unit_id || null,
+                            unit_name: item.unit_name || item.unit_short_name || 'Pcs',
+                            base_unit_id: item.unit_id || null,
+                            selling_units: [],
+                            stock_quantity: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
+                            discount_type: 'fixed',
+                            discount: discountValue,
                         });
                     } else {
                         cart.push({

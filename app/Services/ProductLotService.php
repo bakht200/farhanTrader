@@ -353,7 +353,9 @@ class ProductLotService
                 foreach ($productLots as $lot) {
                     $cards->push($this->cardFromLot($product, $lot));
                 }
-            } else {
+            } elseif ((float) ($product->stock_quantity ?? 0) > 0) {
+                // POS search/grid must not list zero-stock catalog rows
+                // (same name, empty qty) next to rows that still have stock.
                 $cards->push($this->cardFromProduct($product));
             }
         }

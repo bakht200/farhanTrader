@@ -1312,6 +1312,9 @@ class POSController extends Controller
             'id' => $editOrder->id,
             'sale_number' => $editOrder->sale_number ?? $editOrder->order_number ?? null,
             'order_number' => $editOrder->order_number ?? $editOrder->sale_number ?? null,
+            'status' => $editOrder->status ?? null,
+            // Matches SaleEditStockService: completed sales already deducted stock.
+            'stock_was_deducted' => ($editOrder->status ?? null) === 'completed',
             'customer' => $editOrder->customer ? [
                 'id' => $editOrder->customer->id,
                 'name' => $editOrder->customer->name,

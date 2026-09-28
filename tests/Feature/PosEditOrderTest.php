@@ -45,6 +45,22 @@ class PosEditOrderTest extends TestCase
         $this->assertStringContainsString('urlEditOrderId', $pos);
         $this->assertStringContainsString('/sales/pos/edit-order', $pos);
         $this->assertStringContainsString('edit_order_id', $pos);
+        $this->assertStringContainsString('rebuildEditStockCredits', $pos);
+        $this->assertStringContainsString('getEditStockCreditForItem', $pos);
+        $this->assertStringContainsString('stock_was_deducted', $pos);
+    }
+
+    public function test_edit_order_payload_marks_completed_sale_stock_credits(): void
+    {
+        [$user, $sale] = $this->makePendingSale();
+
+        $this->actingAs($user)
+            ->getJson(route('sales.pos.edit-order', $sale->id))
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('order.stock_was_deducted', true)
+            ->assertJsonPath('order.status', 'completed')
+            ->assertJsonPath('order.items.0.quantity_in_base_unit', 2);
     }
 
     /**

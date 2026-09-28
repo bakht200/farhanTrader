@@ -322,6 +322,27 @@ class SupplierBillProductsTest extends TestCase
         $this->assertEquals(250.0, (float) $cards->first()['extra_price']);
     }
 
+    public function test_pos_cards_omit_zero_stock_products_with_same_name(): void
+    {
+        $branch = $this->makeBranch('POS ZERO STOCK');
+        $user = $this->makeBranchUser($branch);
+        $inStock = $this->makeProductForBranch($branch, ['name' => 'TOKREE 10KG', 'sku' => 'TOK-IN'], 25);
+        $outOfStock = $this->makeProductForBranch($branch, ['name' => 'TOKREE 10KG', 'sku' => 'TOK-OUT'], 0);
+        $service = app(\App\Services\ProductLotService::class);
+
+        $this->actingAs($user);
+        $cards = $service->posCards(collect([$inStock->fresh(), $outOfStock->fresh()]), $branch->id);
+
+        $this->assertTrue($cards->contains(fn ($card) => (int) $card['id'] === (int) $inStock->id));
+        $this->assertFalse($cards->contains(fn ($card) => (int) $card['id'] === (int) $outOfStock->id));
+        $this->assertTrue($cards->every(fn ($card) => (float) $card['stock_quantity'] > 0));
+
+        $html = $this->get(route('sales.pos.index'))->assertOk()->getContent();
+        $this->assertStringContainsString('TOK-IN', $html);
+        $this->assertStringNotContainsString('TOK-OUT', $html);
+        $this->assertStringContainsString('productHasSellableStock', $html);
+    }
+
     public function test_pos_sale_decrements_only_the_selected_lot(): void
     {
         $branch = $this->makeBranch('POS LOTS');
