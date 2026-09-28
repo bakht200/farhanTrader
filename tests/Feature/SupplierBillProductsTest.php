@@ -328,19 +328,27 @@ class SupplierBillProductsTest extends TestCase
         $user = $this->makeBranchUser($branch);
         $inStock = $this->makeProductForBranch($branch, ['name' => 'TOKREE 10KG', 'sku' => 'TOK-IN'], 25);
         $outOfStock = $this->makeProductForBranch($branch, ['name' => 'TOKREE 10KG', 'sku' => 'TOK-OUT'], 0);
+        $dustStock = $this->makeProductForBranch($branch, ['name' => 'TOKREE 10KG', 'sku' => 'TOK-DUST'], 0.000333);
         $service = app(\App\Services\ProductLotService::class);
 
         $this->actingAs($user);
-        $cards = $service->posCards(collect([$inStock->fresh(), $outOfStock->fresh()]), $branch->id);
+        $cards = $service->posCards(collect([
+            $inStock->fresh(),
+            $outOfStock->fresh(),
+            $dustStock->fresh(),
+        ]), $branch->id);
 
         $this->assertTrue($cards->contains(fn ($card) => (int) $card['id'] === (int) $inStock->id));
         $this->assertFalse($cards->contains(fn ($card) => (int) $card['id'] === (int) $outOfStock->id));
-        $this->assertTrue($cards->every(fn ($card) => (float) $card['stock_quantity'] > 0));
+        $this->assertFalse($cards->contains(fn ($card) => (int) $card['id'] === (int) $dustStock->id));
+        $this->assertTrue($cards->every(fn ($card) => round((float) $card['stock_quantity'], 2) > 0));
 
         $html = $this->get(route('sales.pos.index'))->assertOk()->getContent();
         $this->assertStringContainsString('TOK-IN', $html);
         $this->assertStringNotContainsString('TOK-OUT', $html);
+        $this->assertStringNotContainsString('TOK-DUST', $html);
         $this->assertStringContainsString('productHasSellableStock', $html);
+        $this->assertStringContainsString('qty.toFixed(2)', $html);
     }
 
     public function test_pos_sale_decrements_only_the_selected_lot(): void

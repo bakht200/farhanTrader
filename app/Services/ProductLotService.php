@@ -340,7 +340,7 @@ class ProductLotService
         $lots = ProductLot::query()
             ->where('branch_id', $branchId)
             ->whereIn('product_id', $products->pluck('id'))
-            ->where('quantity', '>', 0)
+            ->where('quantity', '>=', 0.01)
             ->orderBy('purchase_price')
             ->orderBy('id')
             ->get()
@@ -353,9 +353,10 @@ class ProductLotService
                 foreach ($productLots as $lot) {
                     $cards->push($this->cardFromLot($product, $lot));
                 }
-            } elseif ((float) ($product->stock_quantity ?? 0) > 0) {
+            } elseif (round((float) ($product->stock_quantity ?? 0), 2) > 0) {
                 // POS search/grid must not list zero-stock catalog rows
                 // (same name, empty qty) next to rows that still have stock.
+                // Tiny leftovers like 0.000333 display as 0.00 — treat as empty.
                 $cards->push($this->cardFromProduct($product));
             }
         }

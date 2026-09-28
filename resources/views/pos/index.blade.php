@@ -181,7 +181,7 @@
 
                 <div class="grid gap-2" id="products-grid" style="grid-template-columns: repeat(8, minmax(0, 1fr));">
                     @foreach(($posCards ?? collect()) as $card)
-                    @if((float) ($card['stock_quantity'] ?? 0) > 0)
+                    @if(round((float) ($card['stock_quantity'] ?? 0), 2) > 0)
                     <div onclick="addToCart({{ $card['id'] }}, {{ $card['lot_id'] ? $card['lot_id'] : 'null' }})"
                          data-product-name="{{ $card['name'] }}"
                          data-product-sku="{{ $card['sku'] ?? '' }}"
@@ -485,12 +485,12 @@
                 const productLots = lotsByProduct.get(Number(p.id)) || [];
                 if (productLots.length) {
                     productLots.forEach((lot) => {
-                        if (Number(lot.quantity || 0) <= 0) {
+                        if (Number(Number(lot.quantity || 0).toFixed(2)) <= 0) {
                             return;
                         }
                         cards.push(mapCachedPosProduct(applyLotToCachedProduct(p, lot)));
                     });
-                } else if (Number(p.stock_quantity || 0) > 0) {
+                } else if (Number(Number(p.stock_quantity || 0).toFixed(2)) > 0) {
                     cards.push(mapCachedPosProduct(p));
                 }
             });
@@ -974,7 +974,9 @@
             const qty = typeof productOrStock === 'object'
                 ? Number(productOrStock?.stock_quantity || 0)
                 : Number(productOrStock || 0);
-            return qty > 0.000001;
+            // Match POS display (2 decimals). Tiny leftovers like 0.000333 show as 0.00
+            // and must not appear in search/grid.
+            return Number(qty.toFixed(2)) > 0;
         }
 
         function productMatchesSearch(productOrName, productSku, rawQuery) {
