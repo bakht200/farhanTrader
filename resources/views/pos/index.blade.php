@@ -870,7 +870,21 @@
             if (!item?.product_id || !baseUnitId || !selectedUnitId || baseUnitId === selectedUnitId) {
                 return stockInBase;
             }
-            return convertQuantity(item.product_id, stockInBase, baseUnitId, selectedUnitId);
+            let maxSelected = await convertQuantity(item.product_id, stockInBase, baseUnitId, selectedUnitId);
+            // Same edit fallback as isQuantityWithinStock when conversion factors are missing.
+            if (
+                orderId
+                && item.edit_original_quantity
+                && item.edit_original_base_qty
+                && Math.abs(maxSelected - stockInBase) < 0.000001
+            ) {
+                const origQty = parseFloat(item.edit_original_quantity) || 0;
+                const origBase = parseFloat(item.edit_original_base_qty) || 0;
+                if (origQty > 0 && origBase > 0) {
+                    maxSelected = stockInBase * (origQty / origBase);
+                }
+            }
+            return maxSelected;
         }
 
         async function isQuantityWithinStock(item, requestedQuantity) {
@@ -882,9 +896,27 @@
                 return { allowed: true, maxSelected: await getMaxQuantityInSelectedUnit(item) };
             }
 
-            const requestedInBase = (!item?.product_id || !baseUnitId || !selectedUnitId || baseUnitId === selectedUnitId)
+            let requestedInBase = (!item?.product_id || !baseUnitId || !selectedUnitId || baseUnitId === selectedUnitId)
                 ? reqQty
                 : await convertQuantity(item.product_id, reqQty, selectedUnitId, baseUnitId);
+
+            // Edit lines hidden from catalog can miss conversion factors. Use the
+            // original invoice qty↔base ratio so 150 PCS still maps to 1 carton.
+            if (
+                orderId
+                && baseUnitId
+                && selectedUnitId
+                && baseUnitId !== selectedUnitId
+                && item.edit_original_quantity
+                && item.edit_original_base_qty
+                && Math.abs(requestedInBase - reqQty) < 0.000001
+            ) {
+                const origQty = parseFloat(item.edit_original_quantity) || 0;
+                const origBase = parseFloat(item.edit_original_base_qty) || 0;
+                if (origQty > 0 && origBase > 0) {
+                    requestedInBase = reqQty * (origBase / origQty);
+                }
+            }
 
             const maxSelected = await getMaxQuantityInSelectedUnit(item);
             return {
@@ -4520,6 +4552,8 @@
                         });
                     } else if (!product) {
                         // Hidden from POS search/grid when stock is 0; still restore the invoice line.
+                        // Keep real base unit + shelf stock so edit stock checks convert PCS↔base
+                        // correctly (e.g. 150 PCS = 1 carton already on this invoice).
                         cart.push({
                             product_id: Number(item.product_id),
                             lot_id: lotId || null,
@@ -4531,11 +4565,14 @@
                             selling_type: 'retail',
                             price_type: 'retail',
                             quantity: parseFloat(item.quantity) || 0,
+                            quantity_in_base_unit: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
+                            edit_original_quantity: parseFloat(item.quantity) || 0,
+                            edit_original_base_qty: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
                             unit_id: item.unit_id || null,
                             unit_name: item.unit_name || item.unit_short_name || 'Pcs',
-                            base_unit_id: item.unit_id || null,
-                            selling_units: [],
-                            stock_quantity: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
+                            base_unit_id: item.base_unit_id || item.unit_id || null,
+                            selling_units: clonePosValue(item.selling_units || []),
+                            stock_quantity: parseFloat(item.current_stock) || 0,
                             discount_type: 'fixed',
                             discount: discountValue,
                         });
@@ -4555,11 +4592,20 @@
                             selling_type: product.selling_type || 'retail',
                             price_type: product.selling_type === 'both' ? 'retail' : (product.selling_type || 'retail'),
                             quantity: parseFloat(item.quantity) || 0,
+                            quantity_in_base_unit: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
+                            edit_original_quantity: parseFloat(item.quantity) || 0,
+                            edit_original_base_qty: parseFloat(item.quantity_in_base_unit || item.quantity) || 0,
                             unit_id: item.unit_id || product.unit_id,
                             unit_name: item.unit_name || product.unit_name,
-                            base_unit_id: product.base_unit_id || product.unit_id,
-                            selling_units: clonePosValue(product.selling_units || []),
-                            stock_quantity: parseFloat(product.stock_quantity) || 0,
+                            base_unit_id: item.base_unit_id || product.base_unit_id || product.unit_id,
+                            selling_units: clonePosValue(
+                                (item.selling_units && item.selling_units.length)
+                                    ? item.selling_units
+                                    : (product.selling_units || [])
+                            ),
+                            stock_quantity: parseFloat(
+                                item.current_stock != null ? item.current_stock : product.stock_quantity
+                            ) || 0,
                             discount_type: 'fixed',
                             discount: discountValue,
                         });

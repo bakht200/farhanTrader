@@ -1291,9 +1291,19 @@ class POSController extends Controller
             return null;
         }
 
-        $editOrder = Sale::with('items.product.unit', 'customer')->find($editOrderId);
+        $editOrder = Sale::with([
+            'items.product.unit',
+            'items.product.baseUnit',
+            'items.product.productUnits.unit',
+            'customer',
+        ])->find($editOrderId);
         if (! $editOrder) {
-            $editOrder = \App\Models\Order::with('items.product.unit', 'customer')->find($editOrderId);
+            $editOrder = \App\Models\Order::with([
+                'items.product.unit',
+                'items.product.baseUnit',
+                'items.product.productUnits.unit',
+                'customer',
+            ])->find($editOrderId);
         }
 
         return $editOrder;
@@ -1322,15 +1332,22 @@ class POSController extends Controller
                 'customer_type' => $editOrder->customer->customer_type,
             ] : null,
             'items' => $editOrder->items->map(function ($item) {
-                $unitId = $item->unit_id ?? ($item->product ? ($item->product->base_unit_id ?? $item->product->unit_id) : null);
-                $unit = $unitId ? Unit::find($unitId) : ($item->product && $item->product->unit ? $item->product->unit : null);
+                $product = $item->product;
+                $unitId = $item->unit_id ?? ($product ? ($product->base_unit_id ?? $product->unit_id) : null);
+                $unit = $unitId ? Unit::find($unitId) : ($product && $product->unit ? $product->unit : null);
+                $baseUnitId = $product
+                    ? ($product->base_unit_id ?? $product->unit_id)
+                    : $unitId;
+                $currentStock = $product
+                    ? (float) $product->currentStock()
+                    : 0.0;
 
                 return [
                     'id' => $item->id,
                     'product_id' => $item->product_id,
                     'product_lot_id' => $item->product_lot_id,
-                    'product_name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
-                    'name' => $item->product_name ?? ($item->product->name ?? 'N/A'),
+                    'product_name' => $item->product_name ?? ($product->name ?? 'N/A'),
+                    'name' => $item->product_name ?? ($product->name ?? 'N/A'),
                     'quantity' => (float) $item->quantity,
                     'quantity_in_base_unit' => (float) ($item->quantity_in_base_unit ?? $item->quantity),
                     'unit_price' => $item->unit_price,
@@ -1339,6 +1356,10 @@ class POSController extends Controller
                     'unit_id' => $unitId,
                     'unit_name' => $unit ? $unit->short_name : 'Pcs',
                     'unit_short_name' => $unit ? $unit->short_name : 'Pcs',
+                    'base_unit_id' => $baseUnitId,
+                    // Shelf qty in base units after this invoice deducted stock.
+                    'current_stock' => $currentStock,
+                    'selling_units' => $product ? $product->sellingUnitsForPos() : [],
                 ];
             })->values()->all(),
         ];

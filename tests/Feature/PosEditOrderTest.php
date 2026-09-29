@@ -48,6 +48,8 @@ class PosEditOrderTest extends TestCase
         $this->assertStringContainsString('rebuildEditStockCredits', $pos);
         $this->assertStringContainsString('getEditStockCreditForItem', $pos);
         $this->assertStringContainsString('stock_was_deducted', $pos);
+        $this->assertStringContainsString('edit_original_base_qty', $pos);
+        $this->assertStringContainsString('current_stock', $pos);
     }
 
     public function test_edit_order_payload_marks_completed_sale_stock_credits(): void
@@ -61,6 +63,58 @@ class PosEditOrderTest extends TestCase
             ->assertJsonPath('order.stock_was_deducted', true)
             ->assertJsonPath('order.status', 'completed')
             ->assertJsonPath('order.items.0.quantity_in_base_unit', 2);
+    }
+
+    public function test_edit_order_payload_includes_base_unit_for_stock_checks(): void
+    {
+        $branch = $this->makeBranch('POS Edit Units');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, ['name' => 'KEER DABA EDIT'], 1);
+        $pcs = \App\Models\Unit::factory()->create(['name' => 'Pieces', 'short_name' => 'PCS']);
+        $product->update(['base_unit_id' => $product->unit_id]);
+        \App\Models\ProductUnit::query()->create([
+            'product_id' => $product->id,
+            'unit_id' => $product->unit_id,
+            'is_base_unit' => true,
+            'selling_price' => 100,
+            'is_active' => true,
+        ]);
+        \App\Models\ProductUnit::query()->create([
+            'product_id' => $product->id,
+            'unit_id' => $pcs->id,
+            'is_base_unit' => false,
+            'selling_price' => 1,
+            'is_active' => true,
+        ]);
+
+        $sale = Sale::factory()->create([
+            'branch_id' => $branch->id,
+            'user_id' => $user->id,
+            'total_amount' => 150,
+            'paid_amount' => 0,
+            'payment_status' => 'pending',
+            'status' => 'completed',
+        ]);
+        SaleItem::create([
+            'branch_id' => $branch->id,
+            'sale_id' => $sale->id,
+            'product_id' => $product->id,
+            'quantity' => 150,
+            'quantity_in_base_unit' => 1,
+            'unit_id' => $pcs->id,
+            'unit_price' => 1,
+            'discount' => 0,
+            'tax' => 0,
+            'total' => 150,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('sales.pos.edit-order', $sale->id))
+            ->assertOk()
+            ->assertJsonPath('order.items.0.base_unit_id', $product->base_unit_id ?? $product->unit_id)
+            ->assertJsonPath('order.items.0.quantity', 150)
+            ->assertJsonPath('order.items.0.quantity_in_base_unit', 1)
+            ->assertJsonPath('order.items.0.current_stock', 1);
     }
 
     /**
