@@ -25,6 +25,7 @@
             <li>Pick the dates / months / years</li>
             <li>Press <strong>Show report</strong> — see profit or loss + all bills below</li>
         </ol>
+        <p class="mt-2 text-blue-800">Profit per bill = sell amount − lot purchase cost (same Pur.Price as POS).</p>
     </div>
 
     <div class="bg-white rounded-lg shadow-sm p-4 mb-6" x-data="{ mode: '{{ $mode }}' }">
@@ -155,7 +156,7 @@
         <div class="px-4 sm:px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
                 <h2 class="text-lg font-semibold text-gray-900">All bills in this period</h2>
-                <p class="text-sm text-gray-500">Bill number · date &amp; time · amount</p>
+                <p class="text-sm text-gray-500">Bill number · date &amp; time · amount · profit</p>
             </div>
             <span class="text-sm text-gray-500">{{ $bills->count() }} bills</span>
         </div>
@@ -166,11 +167,15 @@
                         <th class="px-3 py-3 text-left font-medium text-gray-600">Bill number</th>
                         <th class="px-3 py-3 text-left font-medium text-gray-600">Date &amp; time</th>
                         <th class="px-3 py-3 text-right font-medium text-gray-600">Amount</th>
+                        <th class="px-3 py-3 text-right font-medium text-gray-600">Profit</th>
                         <th class="px-3 py-3 text-left font-medium text-gray-600">Paid?</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100">
                     @forelse($bills as $bill)
+                        @php
+                            $billProfit = (float) ($bill->profit ?? 0);
+                        @endphp
                         <tr class="hover:bg-gray-50">
                             <td class="px-3 py-3">
                                 <a href="{{ route('sales.show', $bill) }}" class="font-medium text-blue-600 hover:text-blue-800">
@@ -182,6 +187,9 @@
                             </td>
                             <td class="px-3 py-3 text-right font-semibold tabular-nums text-gray-900">
                                 PKR {{ number_format($bill->total_amount, 0) }}
+                            </td>
+                            <td class="px-3 py-3 text-right font-semibold tabular-nums {{ $billProfit >= 0 ? 'text-emerald-600' : 'text-red-600' }}">
+                                PKR {{ number_format($billProfit, 0) }}
                             </td>
                             <td class="px-3 py-3">
                                 @php
@@ -203,7 +211,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="4" class="px-3 py-10 text-center text-gray-500">
+                            <td colspan="5" class="px-3 py-10 text-center text-gray-500">
                                 No bills in this period. Try different dates.
                             </td>
                         </tr>

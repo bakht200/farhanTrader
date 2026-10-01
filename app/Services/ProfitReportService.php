@@ -12,16 +12,31 @@ use Illuminate\Support\Collection;
 class ProfitReportService
 {
     /**
-     * Line profit: selling amount minus catalog cost in the product's base unit.
+     * Line profit: selling amount minus cost of the qty sold in base units.
      *
-     * purchase_price is per carton/bag. Sold quantity is often PKT/KG, so
-     * (sell - cost) * quantity would treat every packet as a full carton.
+     * Cost prefers the sold lot rate (same as POS Pur.Price). Falls back to the
+     * product catalog purchase price when the line has no lot.
      */
     public static function grossProfitSql(): string
     {
         return '(sale_items.unit_price * sale_items.quantity - COALESCE(sale_items.discount, 0))'
-            .' - COALESCE(products.purchase_price, 0)'
+            .' - COALESCE(product_lots.purchase_price, products.purchase_price, 0)'
             .' * COALESCE(sale_items.quantity_in_base_unit, sale_items.quantity)';
+    }
+
+    /**
+     * @return \Illuminate\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder
+     */
+    protected function profitLinesQuery(int $branchId, Carbon $startDate, Carbon $endDate)
+    {
+        return SaleItem::query()
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
+            ->leftJoin('product_lots', 'product_lots.id', '=', 'sale_items.product_lot_id')
+            ->where('sales.branch_id', $branchId)
+            ->where('sales.status', 'completed')
+            ->where('sales.sale_number', 'not like', 'ADJ-%')
+            ->whereBetween('sales.sale_date', [$startDate->toDateString(), $endDate->toDateString()]);
     }
 
     /**
@@ -42,15 +57,11 @@ class ProfitReportService
         $revenue = (float) Sale::query()
             ->where('branch_id', $branchId)
             ->where('status', 'completed')
+            ->where('sale_number', 'not like', 'ADJ-%')
             ->whereBetween('sale_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->sum('total_amount');
 
-        $grossProfit = (float) SaleItem::query()
-            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-            ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
-            ->where('sales.branch_id', $branchId)
-            ->where('sales.status', 'completed')
-            ->whereBetween('sales.sale_date', [$startDate->toDateString(), $endDate->toDateString()])
+        $grossProfit = (float) $this->profitLinesQuery($branchId, $startDate, $endDate)
             ->selectRaw('SUM('.self::grossProfitSql().') as gross_profit')
             ->value('gross_profit');
 
@@ -62,6 +73,7 @@ class ProfitReportService
         $billCount = (int) Sale::query()
             ->where('branch_id', $branchId)
             ->where('status', 'completed')
+            ->where('sale_number', 'not like', 'ADJ-%')
             ->whereBetween('sale_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->count();
 
@@ -80,21 +92,41 @@ class ProfitReportService
     }
 
     /**
-     * Completed sales (bills) for the period.
+     * Completed sales (bills) for the period, each with line profit.
      *
      * @return Collection<int, Sale>
      */
     public function bills(Carbon $start, Carbon $end, ?int $branchId = null): Collection
     {
         $branchId = $branchId ?? CurrentBranch::id();
+        $startDate = $start->copy()->startOfDay();
+        $endDate = $end->copy()->endOfDay();
 
-        return Sale::query()
+        $bills = Sale::query()
             ->where('branch_id', $branchId)
             ->where('status', 'completed')
-            ->whereBetween('sale_date', [$start->toDateString(), $end->toDateString()])
+            ->where('sale_number', 'not like', 'ADJ-%')
+            ->whereBetween('sale_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->orderByDesc('sale_date')
             ->orderByDesc('created_at')
             ->get(['id', 'sale_number', 'sale_date', 'created_at', 'total_amount', 'paid_amount', 'payment_status', 'customer_id']);
+
+        if ($bills->isEmpty()) {
+            return $bills;
+        }
+
+        $profits = $this->profitLinesQuery($branchId, $startDate, $endDate)
+            ->whereIn('sales.id', $bills->pluck('id'))
+            ->groupBy('sales.id')
+            ->select('sales.id')
+            ->selectRaw('ROUND(SUM('.self::grossProfitSql().'), 2) as bill_profit')
+            ->pluck('bill_profit', 'id');
+
+        return $bills->map(function (Sale $bill) use ($profits) {
+            $bill->setAttribute('profit', round((float) ($profits[$bill->id] ?? 0), 2));
+
+            return $bill;
+        });
     }
 
     /**
