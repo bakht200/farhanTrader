@@ -19,7 +19,10 @@ class AiInsightsService
         $totalProfit = (float) SaleItem::query()
             ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
             ->leftJoin('products', 'products.id', '=', 'sale_items.product_id')
+            ->leftJoin('product_lots', 'product_lots.id', '=', 'sale_items.product_lot_id')
             ->where('sales.branch_id', $branchId)
+            ->where('sales.status', 'completed')
+            ->where('sales.sale_number', 'not like', 'ADJ-%')
             ->selectRaw('SUM('.ProfitReportService::grossProfitSql().') as total_profit')
             ->value('total_profit');
 
