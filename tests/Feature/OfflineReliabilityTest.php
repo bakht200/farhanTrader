@@ -50,13 +50,15 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString('Do not return an empty JS stub', $sw);
         $this->assertStringNotContainsString("/* offline */", $sw);
         $this->assertStringContainsString('NAV_TIMEOUT_POS_EDIT_MS = 20000', $sw);
-        $this->assertStringContainsString('ftpos-pages-v20', $sw);
+        $this->assertStringContainsString('ftpos-pages-v21', $sw);
         $this->assertStringContainsString('function isPosEditNavigation', $sw);
         $this->assertStringContainsString('edit_order_id', $sw);
         $this->assertStringContainsString('Never store an edit-order POS page', $sw);
         $this->assertStringContainsString('isPosEditNavigation(url) && !offline', $sw);
         $this->assertStringContainsString('function isNestedListNavigation', $sw);
         $this->assertStringContainsString('isNestedListNavigation(url) && !offline', $sw);
+        $this->assertStringContainsString('function isAiInsightsNavigation', $sw);
+        $this->assertStringContainsString('isAiInsightsNavigation(url) && !offline', $sw);
         $this->assertStringContainsString('htmlLooksLikeSupplierIndex', $sw);
         $this->assertStringContainsString('isSupplierIndexPath', $sw);
         $this->assertStringContainsString('Nested URLs must not paint the suppliers/customers index', $sw);
@@ -105,7 +107,7 @@ class OfflineReliabilityTest extends TestCase
         $this->assertStringContainsString("'/login'", $prefetch);
         $this->assertStringContainsString("'/__ftpos_login_shell'", $prefetch);
         $this->assertStringContainsString('htmlLooksLikeLogin', $prefetch);
-            $this->assertStringContainsString("ftpos-pages-v20", $prefetch);
+            $this->assertStringContainsString("ftpos-pages-v21", $prefetch);
         $this->assertStringContainsString('CORE_SHELLS', $prefetch);
         $this->assertStringContainsString("includes('/login')", $prefetch);
         $this->assertStringContainsString('options.includeSuppliers', $prefetch);

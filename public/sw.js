@@ -1,5 +1,5 @@
 /* Farhan Traders offline Service Worker — no install prompt */
-const CACHE_NAME = 'ftpos-pages-v20';
+const CACHE_NAME = 'ftpos-pages-v21';
 const APP_SHELL_PATH = '/__ftpos_app_shell';
 const SHELL_URLS = ['/offline.html', '/logo.png'];
 const NAV_TIMEOUT_ONLINE_MS = 2500;
@@ -172,6 +172,15 @@ function isNestedListNavigation(url) {
       return true;
     }
     return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isAiInsightsNavigation(url) {
+  try {
+    const p = url.pathname.replace(/\/+$/, '') || '/';
+    return p === '/ai-insights' || p.startsWith('/ai-insights/');
   } catch (e) {
     return false;
   }
@@ -818,6 +827,11 @@ self.addEventListener('fetch', (event) => {
       return;
     }
     if (isNestedListNavigation(url) && !offline) {
+      return;
+    }
+    // AI pages run heavy queries; the SW 2.5s timeout was painting the
+    // "page is not on this PC yet" fallback under /ai-insights.
+    if (isAiInsightsNavigation(url) && !offline) {
       return;
     }
     event.respondWith(handleNavigation(req));
