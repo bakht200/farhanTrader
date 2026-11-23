@@ -97,12 +97,15 @@ class POSController extends Controller
 
         // Calculate balance for each customer - exclude ADJ bills as they are adjustment records
         // Also exclude the order being edited (if any) from the balance calculation
-        foreach ($customers as $customer) {
-            $excludeSaleId = ($editOrder && (int) $editOrder->customer_id === (int) $customer->id)
-                ? (int) $editOrder->id
-                : null;
+        $editCustomerId = $editOrder ? (int) $editOrder->customer_id : null;
+        $balanceSummaries = app(CustomerBalanceService::class)->calculateCustomerBalanceSummaries(
+            $customers->pluck('id')->reject(fn ($id) => (int) $id === $editCustomerId)
+        );
 
-            $balanceSummary = $this->calculateCustomerBalanceSummary($customer->id, $excludeSaleId);
+        foreach ($customers as $customer) {
+            $balanceSummary = (int) $customer->id === $editCustomerId
+                ? $this->calculateCustomerBalanceSummary($customer->id, (int) $editOrder->id)
+                : ($balanceSummaries[(int) $customer->id] ?? ['total_price' => 0.0, 'paid_amount' => 0.0, 'unpaid_amount' => 0.0]);
             $customer->total_price = $balanceSummary['total_price'];
             $customer->paid_amount = $balanceSummary['paid_amount'];
             $customer->unpaid_amount = $balanceSummary['unpaid_amount'];

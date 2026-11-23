@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Models\Branch;
+use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\View;
@@ -15,7 +16,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->scoped(UnitConversionService::class);
     }
 
     /**

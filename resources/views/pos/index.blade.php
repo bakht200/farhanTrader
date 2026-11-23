@@ -171,7 +171,7 @@
                                id="product-search" 
                                placeholder="Q Search Product" 
                                value="{{ $search }}"
-                               oninput="searchProducts(this.value)"
+                               oninput="debouncedSearchProducts(this.value)"
                                class="w-full px-4 py-2 pl-10 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500">
                         <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -191,7 +191,7 @@
                          class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
                         <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
                             @if(!empty($card['image']))
-                                <img src="{{ $card['image'] }}" alt="{{ $card['name'] }}" class="w-full h-full object-cover">
+                                <img src="{{ $card['image'] }}" alt="{{ $card['name'] }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
                             @else
                                 <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
@@ -248,7 +248,7 @@
                            placeholder="Search Product to Add..." 
                            autocomplete="off"
                            class="w-full px-4 py-2 pl-10 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
-                           oninput="searchProductsRight(this.value); if(this.value.trim()) showProductSuggestions();"
+                           oninput="if(this.value.trim()) showProductSuggestions(); else searchProductsRight(this.value);"
                            onfocus="if(this.value.trim()) showProductSuggestions()"
                            onblur="setTimeout(() => hideProductSuggestions(), 200)"
                            onkeydown="handleProductSearchKeydown(event)">
@@ -312,7 +312,7 @@
                                placeholder="Search by name, ID, or phone (use type filters below)" 
                                autocomplete="off"
                                class="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
-                               oninput="filterCustomers()"
+                               oninput="debouncedFilterCustomers()"
                                onfocus="showCustomerDropdown()"
                                onblur="setTimeout(() => hideCustomerDropdown(), 200)">
                         <input type="hidden" id="customer-id" value="">
@@ -1289,6 +1289,17 @@
                 }
             }
         }
+
+        function debounce(fn, wait) {
+            let timer = null;
+            return function (...args) {
+                clearTimeout(timer);
+                timer = setTimeout(() => fn.apply(this, args), wait);
+            };
+        }
+
+        const debouncedSearchProducts = debounce((query) => searchProducts(query), 150);
+        const debouncedFilterCustomers = debounce(() => filterCustomers(), 120);
 
         // Search products (client-side filtering without page reload)
         function searchProducts(query) {
@@ -3025,6 +3036,7 @@
                 String(customer.customer_type || '').toLowerCase().includes(searchTerm);
 
             const filtered = byType.filter(matchesSearch);
+            const fragment = document.createDocumentFragment();
 
             if (filtered.length > 0) {
                 filtered.forEach(customer => {
@@ -3037,14 +3049,16 @@
                         : '';
                     item.innerHTML = `<div class="font-medium text-gray-900">${customer.name}</div>${typeLabel}<div class="text-xs text-gray-500 mt-0.5">${customer.customer_id}${customer.phone ? ' | ' + customer.phone : ''}</div>${balanceText}`;
                     item.onclick = () => selectCustomer(customer);
-                    customerList.appendChild(item);
+                    fragment.appendChild(item);
                 });
             } else {
                 const item = document.createElement('div');
                 item.className = 'px-4 py-2 text-gray-500 italic text-sm';
                 item.textContent = searchTerm ? 'No customer found' : 'No customers in this type';
-                customerList.appendChild(item);
+                fragment.appendChild(item);
             }
+
+            customerList.appendChild(fragment);
         }
         
         function showCustomerDropdown() {

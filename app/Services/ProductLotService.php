@@ -346,12 +346,15 @@ class ProductLotService
             ->get()
             ->groupBy('product_id');
 
+        app(UnitConversionService::class)->preloadForProducts($products);
+
         $cards = collect();
         foreach ($products as $product) {
             $productLots = $lots->get($product->id, collect());
             if ($productLots->isNotEmpty()) {
+                $baseCard = $this->cardFromProduct($product);
                 foreach ($productLots as $lot) {
-                    $cards->push($this->cardFromLot($product, $lot));
+                    $cards->push($this->cardFromLot($product, $lot, $baseCard));
                 }
             } elseif (round((float) ($product->stock_quantity ?? 0), 2) > 0) {
                 // POS search/grid must not list zero-stock catalog rows
@@ -398,9 +401,9 @@ class ProductLotService
     /**
      * @return array<string, mixed>
      */
-    public function cardFromLot(Product $product, ProductLot $lot): array
+    public function cardFromLot(Product $product, ProductLot $lot, ?array $baseCard = null): array
     {
-        $card = $this->cardFromProduct($product);
+        $card = $baseCard ?? $this->cardFromProduct($product);
         $lotSelling = $lot->displaySellingPrice();
         $productBase = $product->branchPosBasePrice();
         $ratio = $productBase > 0 ? ($lotSelling / $productBase) : 1.0;

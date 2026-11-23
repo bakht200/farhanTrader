@@ -5,10 +5,49 @@ namespace App\Services;
 use App\Models\Product;
 use App\Models\ProductUnit;
 use App\Models\UnitConversion;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
 class UnitConversionService
 {
+    /** @var array<int, array<string, UnitConversion>> product_id => "from_to" => conversion */
+    protected array $preloadedConversions = [];
+
+    /** @var array<int, Product> products whose productUnits relation is already loaded */
+    protected array $preloadedProducts = [];
+
+    /**
+     * Load every active conversion for these products in one query so per-unit
+     * lookups (e.g. building POS cards) don't hit the database/cache store each time.
+     *
+     * @param  Collection<int, Product>  $products
+     */
+    public function preloadForProducts(Collection $products): void
+    {
+        $ids = $products->pluck('id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        if ($ids->isEmpty()) {
+            return;
+        }
+
+        foreach ($ids as $id) {
+            $this->preloadedConversions[$id] = [];
+        }
+
+        UnitConversion::active()
+            ->whereIn('product_id', $ids)
+            ->orderBy('id')
+            ->get()
+            ->each(function (UnitConversion $row) {
+                $key = $row->from_unit_id.'_'.$row->to_unit_id;
+                $this->preloadedConversions[(int) $row->product_id][$key] ??= $row;
+            });
+
+        foreach ($products as $product) {
+            if ($product->relationLoaded('productUnits')) {
+                $this->preloadedProducts[(int) $product->id] = $product;
+            }
+        }
+    }
     /**
      * Convert quantity from one unit to another for a specific product.
      *
@@ -212,11 +251,17 @@ class UnitConversionService
 
     public function clearCache(): void
     {
+        $this->preloadedConversions = [];
+        $this->preloadedProducts = [];
         Cache::flush();
     }
 
     protected function getConversion(int $fromUnitId, int $toUnitId, int $productId): ?UnitConversion
     {
+        if (isset($this->preloadedConversions[$productId])) {
+            return $this->preloadedConversions[$productId][$fromUnitId.'_'.$toUnitId] ?? null;
+        }
+
         $cacheKey = "unit_conversion_{$productId}_{$fromUnitId}_{$toUnitId}";
         $cached = Cache::get($cacheKey);
         if ($cached instanceof UnitConversion) {
@@ -253,17 +298,21 @@ class UnitConversionService
 
     protected function unitSellingPrice(int $productId, int $unitId): float
     {
-        $row = ProductUnit::query()
-            ->where('product_id', $productId)
-            ->where('unit_id', $unitId)
-            ->active()
-            ->first();
+        $preloaded = $this->preloadedProducts[$productId] ?? null;
+
+        $row = $preloaded
+            ? $preloaded->productUnits->first(fn ($pu) => (int) $pu->unit_id === $unitId && (bool) $pu->is_active)
+            : ProductUnit::query()
+                ->where('product_id', $productId)
+                ->where('unit_id', $unitId)
+                ->active()
+                ->first();
 
         if ($row && (float) $row->selling_price > 0) {
             return (float) $row->selling_price;
         }
 
-        $product = Product::query()->find($productId);
+        $product = $preloaded ?? Product::query()->find($productId);
         if (! $product) {
             return 0.0;
         }

@@ -118,6 +118,64 @@ class CustomerBalanceService
         ];
     }
 
+    /**
+     * Batched form of calculateCustomerBalanceSummary() for many customers at once
+     * (two queries total instead of two per customer).
+     *
+     * @return array<int, array{total_price: float, paid_amount: float, unpaid_amount: float}>
+     */
+    public function calculateCustomerBalanceSummaries(Collection $customerIds): array
+    {
+        $customerIds = $customerIds->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        if ($customerIds->isEmpty()) {
+            return [];
+        }
+
+        $empty = ['total_price' => 0.0, 'paid_amount' => 0.0, 'unpaid_amount' => 0.0];
+        $summaries = array_fill_keys($customerIds->all(), $empty);
+
+        $sales = Sale::query()
+            ->whereIn('customer_id', $customerIds)
+            ->where('sale_number', 'not like', 'ADJ-%')
+            ->orderBy('customer_id')
+            ->orderBy('sale_date')
+            ->orderBy('id')
+            ->get(['id', 'customer_id', 'sale_number', 'total_amount', 'paid_amount']);
+
+        if ($sales->isEmpty()) {
+            return $summaries;
+        }
+
+        [$adjPaidBySaleNumber] = $this->buildAdjMaps($sales->pluck('customer_id')->unique()->values());
+
+        foreach ($sales->groupBy('customer_id') as $customerId => $customerSales) {
+            $customerId = (int) $customerId;
+            $cumulativeTotal = 0.0;
+            $cumulativePaid = 0.0;
+
+            foreach ($customerSales as $sale) {
+                $cumulativeTotal += (float) ($sale->total_amount ?? 0);
+                $dbPaid = (float) ($sale->paid_amount ?? 0);
+                $adjPaid = (float) ($adjPaidBySaleNumber[$customerId][$sale->sale_number] ?? 0);
+                $remainingAfterDbPaid = max(0.0, ((float) ($sale->total_amount ?? 0)) - $dbPaid);
+                $effectiveAdjPaid = min($adjPaid, $remainingAfterDbPaid);
+                $cumulativePaid += ($dbPaid + $effectiveAdjPaid);
+
+                if ($cumulativePaid > $cumulativeTotal) {
+                    $cumulativePaid = $cumulativeTotal;
+                }
+            }
+
+            $summaries[$customerId] = [
+                'total_price' => round($cumulativeTotal, 2),
+                'paid_amount' => round($cumulativePaid, 2),
+                'unpaid_amount' => round(max(0, $cumulativeTotal - $cumulativePaid), 2),
+            ];
+        }
+
+        return $summaries;
+    }
+
     protected function buildSaleBalanceMap(Collection $customerIds): array
     {
         if ($customerIds->isEmpty()) {

@@ -97,7 +97,11 @@ class Product extends Model
         return $this->productUnits()->active()->with('unit');
     }
 
-    public function getBaseUnitAttribute()
+    /**
+     * Not named getBaseUnitAttribute(): that accessor would shadow the baseUnit()
+     * relation, so `$product->baseUnit` would ignore eager loading and query every time.
+     */
+    public function baseProductUnit(): ?ProductUnit
     {
         return $this->productUnits()->baseUnit()->active()->with('unit')->first();
     }
