@@ -171,8 +171,9 @@ class SupplierBillProductsTest extends TestCase
         $this->assertStringContainsString('ASHRAFI (ORANGE)', $html);
         $this->assertStringContainsString('Rate PKR 3,300.00', $html);
         $this->assertStringContainsString('Rate PKR 3,500.00', $html);
-        $this->assertStringContainsString('4,000.00', $html);
-        $this->assertStringContainsString('4,200.00', $html);
+        // Cards are built client-side from the embedded product JSON, so assert the lot prices there.
+        $this->assertMatchesRegularExpression('/"retail_price":4000(\.0+)?[,}]/', $html);
+        $this->assertMatchesRegularExpression('/"retail_price":4200(\.0+)?[,}]/', $html);
     }
 
     public function test_second_bill_at_same_rate_adds_to_existing_lot(): void

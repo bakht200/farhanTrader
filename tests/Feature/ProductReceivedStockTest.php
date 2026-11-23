@@ -248,7 +248,8 @@ class ProductReceivedStockTest extends TestCase
         $html = $this->get(route('sales.pos.index'))->assertOk()->getContent();
         $this->assertStringContainsString('Rate PKR 200.00', $html);
         $this->assertStringContainsString('Rate PKR 400.00', $html);
-        $this->assertStringContainsString('550.00', $html);
+        // Cards are built client-side from the embedded product JSON, so assert the lot prices there.
+        $this->assertMatchesRegularExpression('/"retail_price":550(\.0+)?[,}]/', $html);
         $this->assertStringNotContainsString('250.00', $html);
     }
 

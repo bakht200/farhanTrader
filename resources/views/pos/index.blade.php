@@ -179,37 +179,8 @@
                     </div>
                 </div>
 
-                <div class="grid gap-2" id="products-grid" style="grid-template-columns: repeat(8, minmax(0, 1fr));">
-                    @foreach(($posCards ?? collect()) as $card)
-                    @if(round((float) ($card['stock_quantity'] ?? 0), 2) > 0)
-                    <div onclick="addToCart({{ $card['id'] }}, {{ $card['lot_id'] ? $card['lot_id'] : 'null' }})"
-                         data-product-name="{{ $card['name'] }}"
-                         data-product-sku="{{ $card['sku'] ?? '' }}"
-                         data-product-brand="{{ $card['brand'] ?? '' }}"
-                         data-category-id="{{ $card['category_id'] }}"
-                         data-stock-quantity="{{ $card['stock_quantity'] }}"
-                         class="bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow">
-                        <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
-                            @if(!empty($card['image']))
-                                <img src="{{ $card['image'] }}" alt="{{ $card['name'] }}" loading="lazy" decoding="async" class="w-full h-full object-cover">
-                            @else
-                                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                                </svg>
-                            @endif
-                        </div>
-                        <h4 class="font-semibold text-xs mb-1 line-clamp-2">{{ $card['name'] }}</h4>
-                        <p class="text-xs text-gray-500 mb-1">Remaining: {{ number_format($card['stock_quantity'], 2) }} {{ $card['unit_name'] ?? 'Pcs' }}</p>
-                        <p class="text-sm font-bold text-orange-600">PKR {{ number_format($card['selling_price'] ?? $card['retail_price'] ?? 0, 2) }}</p>
-                        @if(!empty($card['lot_label']))
-                            <p class="text-xs text-gray-500 mt-0.5">{{ $card['lot_label'] }}</p>
-                        @elseif(!empty($card['selling_type']))
-                            <p class="text-xs text-gray-400 mt-1">{{ ucfirst($card['selling_type']) }}</p>
-                        @endif
-                    </div>
-                    @endif
-                    @endforeach
-                </div>
+                <!-- Cards are built from the embedded `products` data by renderPosGrid(). -->
+                <div class="grid gap-2" id="products-grid" style="grid-template-columns: repeat(8, minmax(0, 1fr));"></div>
             </div>
             </div>
         </div>
@@ -425,6 +396,12 @@
         let customerPreviousBalance = 0;
         let purchasePriceVisible = false; // Purchase price masked by default (shows XXXX)
         let currentCategoryId = '{{ $categoryId }}'; // Current selected category
+        // Product grid state: cards are rendered from `products` in batches.
+        const POS_GRID_BATCH_SIZE = 120;
+        let posGridSearchTerm = '';
+        let posGridMatchList = [];
+        let posGridRenderedCount = 0;
+        let posGridObserver = null;
         let editingCustomProductIndex = null; // Track which custom product is being edited
         const conversionFactorCache = {};
 
@@ -521,11 +498,61 @@
             };
         }
 
-        function rebuildProductGrid() {
-            const productsGrid = document.getElementById('products-grid');
-            if (!productsGrid) return;
+        // Products matching the current category and search term, in catalog order.
+        function getPosGridMatches() {
+            const term = String(posGridSearchTerm || '').toLowerCase().trim();
+            const categoryKey = String(currentCategoryId ?? 'all');
+            return products.filter((product) =>
+                productHasSellableStock(product)
+                && (categoryKey === 'all' || String(product.category_id ?? '') === categoryKey)
+                && productMatchesSearch(product, null, term)
+            );
+        }
 
-            productsGrid.innerHTML = products.filter(productHasSellableStock).map((product) => {
+        // Clear the grid and render the first batch of matching cards.
+        function renderPosGrid() {
+            const grid = document.getElementById('products-grid');
+            if (!grid) return;
+            if (posGridObserver) posGridObserver.disconnect();
+            posGridMatchList = getPosGridMatches();
+            posGridRenderedCount = 0;
+            grid.innerHTML = '';
+            appendPosGridBatch(grid);
+        }
+
+        // Append the next batch of cards. A sentinel at the end loads more as the user scrolls.
+        function appendPosGridBatch(grid) {
+            grid.querySelector(':scope > .pos-grid-sentinel')?.remove();
+
+            const batch = posGridMatchList.slice(posGridRenderedCount, posGridRenderedCount + POS_GRID_BATCH_SIZE);
+            const template = document.createElement('template');
+            template.innerHTML = batch.map(posCardHtml).join('');
+            grid.appendChild(template.content);
+            posGridRenderedCount += batch.length;
+
+            if (posGridRenderedCount >= posGridMatchList.length) return;
+
+            if (!('IntersectionObserver' in window)) {
+                appendPosGridBatch(grid);
+                return;
+            }
+
+            const sentinel = document.createElement('div');
+            sentinel.className = 'pos-grid-sentinel h-px';
+            grid.appendChild(sentinel);
+            if (!posGridObserver) {
+                posGridObserver = new IntersectionObserver((entries) => {
+                    if (!entries.some((entry) => entry.isIntersecting)) return;
+                    const currentGrid = document.getElementById('products-grid');
+                    if (currentGrid) appendPosGridBatch(currentGrid);
+                }, { rootMargin: '400px 0px' });
+            }
+            posGridObserver.disconnect();
+            posGridObserver.observe(sentinel);
+        }
+
+        // Markup for one product card (same card layout as before).
+        function posCardHtml(product) {
                 const price = Number(posDisplayPrice(product) || 0);
                 const qty = Number(product.stock_quantity || 0);
                 const img = product.image
@@ -550,11 +577,10 @@
                         <p class="text-sm font-bold text-orange-600">PKR ${price.toFixed(2)}</p>
                         ${lotLabel}
                     </div>`;
-            }).join('');
+        }
 
-            if (typeof filterCategory === 'function') {
-                filterCategory(currentCategoryId);
-            }
+        function rebuildProductGrid() {
+            renderPosGrid();
         }
 
         function rebuildCategoryButtons(list) {
@@ -624,8 +650,10 @@
             return true;
         }
 
+        // The grid is rendered from `products`, so an empty grid only means no matches
+        // for the current search; the catalog is empty only when there are no products.
         function posCatalogDomEmpty() {
-            return !document.querySelector('#products-grid [data-product-name]');
+            return products.length === 0;
         }
 
         async function hydratePosFromOfflineCache(opts = {}) {
@@ -1255,39 +1283,12 @@
                 });
             }
             
-            // Filter products (also respect current search term)
-            const productsGrid = document.getElementById('products-grid');
-            if (!productsGrid) return;
-            
+            // Keep the current search term and re-render the grid for this category
             const searchInput = document.getElementById('product-search');
-            const searchTerm = (searchInput && searchInput.value ? searchInput.value : '').toLowerCase().trim();
-            
-            const productCards = productsGrid.children;
-            for (let i = 0; i < productCards.length; i++) {
-                const card = productCards[i];
-                if (!card.hasAttribute('data-category-id')) continue;
-                
-                const cardCategoryId = card.getAttribute('data-category-id');
-                const productName = (card.getAttribute('data-product-name') || '').toLowerCase();
-                const productSku = (card.getAttribute('data-product-sku') || '').toLowerCase();
-                
-                // Check if matches category filter
-                const matchesCategory = categoryId === 'all' || cardCategoryId === categoryId.toString();
-                
-                // Check if matches search term
-                const matchesSearch = productMatchesSearch(
-                    card.getAttribute('data-product-name') || '',
-                    card.getAttribute('data-product-sku') || '',
-                    searchTerm
-                );
-                const hasStock = productHasSellableStock(card.getAttribute('data-stock-quantity'));
-                
-                if (matchesCategory && matchesSearch && hasStock) {
-                    card.style.display = '';
-                } else {
-                    card.style.display = 'none';
-                }
+            if (searchInput) {
+                posGridSearchTerm = searchInput.value || '';
             }
+            renderPosGrid();
         }
 
         function debounce(fn, wait) {
@@ -1303,39 +1304,8 @@
 
         // Search products (client-side filtering without page reload)
         function searchProducts(query) {
-            const productsGrid = document.getElementById('products-grid');
-            if (!productsGrid) return;
-            
-            const searchTerm = (query || '').toLowerCase().trim();
-            
-            // Get all product cards (direct children divs with data-product-name attribute)
-            const productCards = productsGrid.children;
-            
-            for (let i = 0; i < productCards.length; i++) {
-                const card = productCards[i];
-                if (!card.hasAttribute('data-product-name')) continue;
-                
-                const productName = (card.getAttribute('data-product-name') || '').toLowerCase();
-                const productSku = (card.getAttribute('data-product-sku') || '').toLowerCase();
-                const cardCategoryId = card.getAttribute('data-category-id');
-                
-                // Check if matches search term
-                const matchesSearch = productMatchesSearch(
-                    card.getAttribute('data-product-name') || '',
-                    card.getAttribute('data-product-sku') || '',
-                    searchTerm
-                );
-                
-                // Check if matches current category filter
-                const matchesCategory = currentCategoryId === 'all' || cardCategoryId === currentCategoryId.toString();
-                const hasStock = productHasSellableStock(card.getAttribute('data-stock-quantity'));
-                
-                if (matchesSearch && matchesCategory && hasStock) {
-                    card.style.display = '';
-                } else {
-                    card.style.display = 'none';
-                }
-            }
+            posGridSearchTerm = query || '';
+            renderPosGrid();
         }
 
         // Add to cart
@@ -3474,59 +3444,14 @@
         }
 
         // Add new product to the products grid dynamically
-        function addProductToGrid(product) {
-            const productsGrid = document.getElementById('products-grid');
-            if (!productsGrid) return;
-            if (!productHasSellableStock(product)) {
-                return;
-            }
-
-            // Calculate display price
-            let displayPrice = product.selling_price;
-            if (product.selling_type === 'retail' && product.retail_price) {
-                displayPrice = product.retail_price;
-            } else if (product.selling_type === 'wholesale' && product.wholesale_price) {
-                displayPrice = product.wholesale_price;
-            } else if (product.selling_type === 'both' && product.retail_price) {
-                displayPrice = product.retail_price;
-            }
-
-            // Create product card element
-            const productCard = document.createElement('div');
-            productCard.onclick = () => addToCart(product.id, product.lot_id || null);
-            productCard.setAttribute('data-product-name', product.name);
-            productCard.setAttribute('data-product-sku', product.sku || '');
-            productCard.setAttribute('data-category-id', product.category_id || '');
-            productCard.setAttribute('data-stock-quantity', String(product.stock_quantity || 0));
-            productCard.className = 'bg-white border border-gray-200 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-shadow';
-
-            // Build inner HTML
-            let imageHtml = '';
-            if (product.image) {
-                imageHtml = `<img src="${product.image}" alt="${product.name}" class="w-full h-full object-cover">`;
-            } else {
-                imageHtml = `<svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                </svg>`;
-            }
-
-            productCard.innerHTML = `
-                <div class="aspect-square bg-gray-100 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
-                    ${imageHtml}
-                </div>
-                <h4 class="font-semibold text-xs mb-1 line-clamp-2">${product.name}</h4>
-                <p class="text-xs text-gray-500 mb-1">Remaining: ${parseFloat(product.stock_quantity || 0).toFixed(2)} ${product.unit_name || 'Pcs'}</p>
-                <p class="text-sm font-bold text-orange-600">PKR ${parseFloat(displayPrice).toFixed(2)}</p>
-                ${product.selling_type ? `<p class="text-xs text-gray-400 mt-1">${product.selling_type.charAt(0).toUpperCase() + product.selling_type.slice(1)}</p>` : ''}
-            `;
-
-            // Add to grid
-            productsGrid.appendChild(productCard);
-
-            // Apply current filters (category and search)
+        // The product is already in `products` (the caller pushes it); re-render so it appears
+        // with the current category and search filters applied.
+        function addProductToGrid() {
             const searchInput = document.getElementById('product-search');
-            const searchTerm = searchInput ? searchInput.value : '';
-            searchProducts(searchTerm);
+            if (searchInput) {
+                posGridSearchTerm = searchInput.value || '';
+            }
+            renderPosGrid();
         }
 
         // Auto-generate SKU function (same as in create.blade.php)
@@ -4428,12 +4353,11 @@
         
         // Initialize cart on page load
         renderCart();
-        
-        // Initialize search on page load if there's a search value
+
+        // Render the product grid, applying the search box value if there is one
         const searchInput = document.getElementById('product-search');
-        if (searchInput && searchInput.value) {
-            searchProducts(searchInput.value);
-        }
+        posGridSearchTerm = searchInput && searchInput.value ? searchInput.value : '';
+        renderPosGrid();
         
         // Auto-load hold order if load_hold parameter is in URL
         const urlParams = new URLSearchParams(window.location.search);

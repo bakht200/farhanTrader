@@ -14,6 +14,8 @@
         $quantityAlerts = Product::query()
             ->where('products.is_active', true)
             ->visibleToBranch($branchId)
+            // Eager-load the branch stock so Product::getNameAttribute() does not query per row.
+            ->with('currentBranchStock')
             ->leftJoin('branch_product_stocks', function ($join) use ($branchId) {
                 $join->on('branch_product_stocks.product_id', '=', 'products.id')
                     ->where('branch_product_stocks.branch_id', '=', $branchId);
