@@ -628,6 +628,8 @@ class POSController extends Controller
                 'message' => $isEditing ? 'Order updated successfully.' : 'Sale processed successfully.',
                 'sale_number' => $sale->sale_number,
                 'sale_id' => $sale->id,
+                // Saved time (app timezone) so the printed receipt matches the stored sale.
+                'sale_datetime' => ($sale->created_at ?? now())->format('Y-m-d h:i A'),
                 'previous_balance' => round($previousBalance, 2),
                 'previous_balance_payment' => round($extraPayment, 2),
                 'paid_amount' => $totalPaidAmount,

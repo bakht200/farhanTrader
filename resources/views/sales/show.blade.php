@@ -15,7 +15,7 @@
         <div class="flex justify-between items-start mb-6">
             <div>
                 <h2 class="text-2xl font-bold text-gray-900">{{ $sale->sale_number }}</h2>
-                <p class="text-sm text-gray-500">Date: {{ $sale->sale_date->format('Y-m-d') }}</p>
+                <p class="text-sm text-gray-500">Date: {{ $sale->created_at ? $sale->created_at->format('Y-m-d h:i A') : $sale->sale_date->format('Y-m-d') }}</p>
             </div>
             <div class="flex space-x-2">
                 <a href="{{ route('sales.edit', $sale) }}" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-md">Edit</a>
@@ -37,7 +37,7 @@
                     </div>
                     <div>
                         <dt class="text-sm font-medium text-gray-500">Sale Date</dt>
-                        <dd class="mt-1 text-gray-900">{{ $sale->sale_date->format('Y-m-d') }}</dd>
+                        <dd class="mt-1 text-gray-900">{{ $sale->created_at ? $sale->created_at->format('Y-m-d h:i A') : $sale->sale_date->format('Y-m-d') }}</dd>
                     </div>
                     <div>
                         <dt class="text-sm font-medium text-gray-500">Status</dt>

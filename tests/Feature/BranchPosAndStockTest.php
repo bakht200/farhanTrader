@@ -316,6 +316,78 @@ class BranchPosAndStockTest extends TestCase
         $this->assertEquals(5.0, (float) $sale->fresh()->items()->sum('quantity'));
     }
 
+    public function test_offline_sync_keeps_the_time_the_sale_was_made(): void
+    {
+        $branch = $this->makeBranch('POS Offline Time');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, ['name' => 'Offline Time Item'], 10);
+
+        $this->actingAs($user);
+
+        $push = function (?string $createdAt) use ($branch, $product) {
+            return $this->postJson(route('sync.push'), [
+                'items' => [[
+                    'client_uuid' => (string) \Illuminate\Support\Str::uuid(),
+                    'entity' => 'sale',
+                    'op' => 'create',
+                    'branch_id' => $branch->id,
+                    'created_at' => $createdAt,
+                    'payload' => [
+                        'customer_name' => 'Walk-in Customer',
+                        'payment_method' => 'cash',
+                        'paid_amount' => 10,
+                        'items' => [[
+                            'product_id' => $product->id,
+                            'is_custom' => '0',
+                            'quantity' => 1,
+                            'selling_price' => 10,
+                            'discount' => 0,
+                            'discount_type' => 'percentage',
+                        ]],
+                    ],
+                ]],
+            ]);
+        };
+
+        // Sold at 23:50 yesterday (Karachi) on the device, synced "now".
+        $soldAt = now()->setTimezone('Asia/Karachi')->subDay()->setTime(23, 50, 0);
+        $response = $push($soldAt->copy()->utc()->toIso8601String());
+        $this->assertSame('ok', $response->json('results.0.status'), json_encode($response->json('results.0')));
+
+        $sale = Sale::query()->findOrFail((int) $response->json('results.0.server_id'));
+        $this->assertSame($soldAt->format('Y-m-d H:i'), $sale->created_at->format('Y-m-d H:i'));
+        $this->assertSame($soldAt->toDateString(), $sale->sale_date->toDateString());
+
+        // A device clock in the future must not produce a future-dated sale.
+        $future = now()->addDays(3)->toIso8601String();
+        $response = $push($future);
+        $this->assertSame('ok', $response->json('results.0.status'), json_encode($response->json('results.0')));
+        $sale = Sale::query()->findOrFail((int) $response->json('results.0.server_id'));
+        $this->assertFalse($sale->created_at->isFuture());
+    }
+
+    public function test_pos_process_response_returns_the_saved_sale_time(): void
+    {
+        $branch = $this->makeBranch('POS Receipt Time');
+        $user = $this->makeBranchUser($branch);
+        $product = $this->makeProductForBranch($branch, ['name' => 'Receipt Time Item'], 10);
+
+        $this->actingAs($user);
+        $response = $this->postJson(route('sales.pos.process'), [
+            'payment_method' => 'cash',
+            'paid_amount' => 10,
+            'comment' => 'Receipt time check',
+            'items' => [[
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'selling_price' => 10,
+            ]],
+        ])->assertOk();
+
+        $sale = Sale::query()->findOrFail((int) $response->json('sale_id'));
+        $this->assertSame($sale->created_at->format('Y-m-d h:i A'), $response->json('sale_datetime'));
+    }
+
     public function test_offline_runtime_includes_order_id_on_edit_queue(): void
     {
         $pos = file_get_contents(resource_path('views/pos/index.blade.php'));

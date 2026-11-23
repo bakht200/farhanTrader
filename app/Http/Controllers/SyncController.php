@@ -26,6 +26,7 @@ use App\Services\SaleEditStockService;
 use App\Services\UnitConversionService;
 use App\Support\CurrentBranch;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
@@ -449,6 +450,37 @@ class SyncController extends Controller
         ];
     }
 
+    /**
+     * Time the sale was made on the device (outbox created_at), in the app timezone.
+     * Falls back to "now" when missing/invalid, in the future (fast device clock),
+     * or implausibly old (wrong device clock).
+     */
+    protected function clientSaleTimestamp(array $item): Carbon
+    {
+        $now = now();
+        $raw = $item['created_at'] ?? null;
+
+        if (! is_string($raw) || trim($raw) === '') {
+            return $now;
+        }
+
+        try {
+            $at = Carbon::parse($raw)->setTimezone(config('app.timezone'));
+        } catch (\Throwable) {
+            return $now;
+        }
+
+        if ($at->greaterThan($now)) {
+            return $now;
+        }
+
+        if ($at->lessThan($now->copy()->subDays(14))) {
+            return $now;
+        }
+
+        return $at;
+    }
+
     protected function pushSale(User $user, array $item, string $uuid): array
     {
         $payload = $item['payload'];
@@ -574,12 +606,15 @@ class SyncController extends Controller
             $saleNumber = $sale->sale_number;
         } else {
             $saleNumber = Sale::generateSaleNumber('SALE', $branchId);
-            $sale = Sale::create([
+            // Keep the time the sale really happened (when the receipt was printed offline),
+            // not the time the device later synced.
+            $soldAt = $this->clientSaleTimestamp($item);
+            $sale = new Sale([
                 'branch_id' => $branchId,
                 'sale_number' => $saleNumber,
                 'customer_id' => $payload['customer_id'] ?? null,
                 'user_id' => $user->id,
-                'sale_date' => now()->toDateString(),
+                'sale_date' => $soldAt->toDateString(),
                 'subtotal' => $subtotal,
                 'tax_amount' => 0,
                 'discount_amount' => $totalDiscount,
@@ -589,6 +624,8 @@ class SyncController extends Controller
                 'status' => 'completed',
                 'notes' => $payload['comment'] ?? "Customer: {$customerName}",
             ]);
+            $sale->created_at = $soldAt;
+            $sale->save();
         }
 
         foreach ($prepared as $row) {

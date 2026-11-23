@@ -15,7 +15,7 @@
         <div class="flex justify-between items-start mb-6">
             <div>
                 <h2 class="text-2xl font-bold text-gray-900">{{ $order->sale_number ?? $order->order_number ?? 'N/A' }}</h2>
-                <p class="text-sm text-gray-500">Date: {{ ($order->sale_date ?? $order->order_date ?? now())->format('Y-m-d') }}</p>
+                <p class="text-sm text-gray-500">Date: {{ $order->created_at ? $order->created_at->format('Y-m-d h:i A') : ($order->sale_date ?? $order->order_date ?? now())->format('Y-m-d') }}</p>
             </div>
             <div class="flex space-x-2">
                 <button onclick="printOrderBill({{ $order->id }})" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-md inline-flex items-center">
@@ -43,7 +43,7 @@
                     </div>
                     <div>
                         <dt class="text-sm font-medium text-gray-500">Order Date</dt>
-                        <dd class="mt-1 text-sm text-gray-900">{{ ($order->sale_date ?? $order->order_date ?? now())->format('Y-m-d') }}</dd>
+                        <dd class="mt-1 text-sm text-gray-900">{{ $order->created_at ? $order->created_at->format('Y-m-d h:i A') : ($order->sale_date ?? $order->order_date ?? now())->format('Y-m-d') }}</dd>
                     </div>
                     <div>
                         <dt class="text-sm font-medium text-gray-500">Expected Delivery</dt>

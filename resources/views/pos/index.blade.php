@@ -2407,7 +2407,8 @@
                                 balance: balance,
                                 previousBalance: previousBalance,
                                 previousBalancePayment: order.previous_balance_payment || orderData.previous_balance_payment || data.previous_balance_payment || 0,
-                                orderDate: order.sale_date || order.order_date || order.created_at ? formatDateTime(order.sale_date || order.order_date || order.created_at) : formatDateTime(new Date().toISOString())
+                                // Prefer the full saved date+time; sale_date/order_date may be date-only.
+                                orderDate: formatDateTime(data.sale_datetime || order.created_at || order.sale_date || order.order_date || new Date().toISOString())
                             };
                             
                             // Show bill popup
@@ -2444,7 +2445,7 @@
                                 balance: balance,
                                 previousBalance: previousBalance,
                                 previousBalancePayment: data.previous_balance_payment ?? 0,
-                                orderDate: formatDateTime(new Date().toISOString())
+                                orderDate: formatDateTime(data.sale_datetime || new Date().toISOString())
                             };
                             
                             showBillPopup(lastOrderData.saleNumber);
@@ -2482,7 +2483,8 @@
                         balance: balance,
                         previousBalance: previousBalance,
                         previousBalancePayment: previousBalancePayment,
-                        orderDate: formatDateTime(new Date().toISOString())
+                        // Use the time the server saved the sale so receipt and records always match.
+                        orderDate: formatDateTime(data.sale_datetime || new Date().toISOString())
                     };
                     
                     const newBalance = customerPreviousBalance + cartTotal - paidAmountForReceipt;
